@@ -750,6 +750,37 @@ async function getPZNDBCount(){
   });
 }
 
+// Direkt-Download (Handy-freundlich)
+async function startPZNDownload(){
+  const st=document.getElementById("pzn-dl-status");
+  if(st){st.style.display="block";st.textContent="⏳ Verbinde...";}
+  const result=await downloadPZNList(msg=>{if(st)st.textContent="⏳ "+msg;});
+  if(st)st.style.display="none";
+  if(result.success){toast("✓ "+result.count+" BfArM-Einträge geladen","ok");renderSettings();}
+  else toast("Fehler: "+result.error,"warn");
+}
+
+// Datei hochladen (PZN.txt vom Handy)
+function importPZNFromFile(){
+  const inp=document.createElement("input");inp.type="file";inp.accept=".txt,.csv";
+  inp.onchange=async e=>{
+    const file=e.target.files[0];if(!file)return;
+    toast("📁 Lese Datei...","info");
+    const text=await file.text();
+    const lines=text.split("\n");const records=[];
+    for(let i=2;i<lines.length;i++){
+      const parts=lines[i].split(";");
+      if(parts.length>=4&&parts[0].trim().length>=5)
+        records.push({pzn:parts[0].trim().padStart(8,"0"),name:parts[3]?.trim()||"",form:parts[4]?.trim()||"",unit:parts[1]?.trim()||""});
+    }
+    if(!records.length){toast("Keine PZN-Daten gefunden","warn");return;}
+    toast("💾 Speichere "+records.length+"...","info");
+    const ok=await storePZNRecords(records);
+    if(ok){LS.set("sdro_pzn_dl",{date:td(),count:records.length});renderSettings();toast("✓ "+records.length+" PZNs importiert","ok");}
+    else toast("Speicherfehler","warn");
+  };inp.click();
+}
+
 // BfArM-Liste via CORS-Proxy herunterladen
 async function downloadPZNList(onProgress){
   const CORS_PROXIES=[
@@ -1845,7 +1876,12 @@ function renderSettings(){
         3. Unten auf „📋 Text einfügen" klicken
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" style="flex:1" onclick="importPZNFromClipboard()">📋 BfArM-Text einfügen</button>
+        <button class="btn btn-primary btn-sm btn-full" style="margin-bottom:6px" onclick="startPZNDownload()">⬇️ Direkt herunterladen (Handy)</button>
+        <div id="pzn-dl-status" style="display:none;font-size:11px;color:var(--accent);padding:6px 10px;background:var(--acclo);border-radius:7px;margin-bottom:6px"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromFile()">📁 .txt hochladen</button>
+          <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromClipboard()">📋 Einfügen (PC)</button>
+        </div>
         ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`:""}
       </div>
     <!-- Blister-Cache -->
