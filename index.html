@@ -33,7 +33,7 @@
 }
 /* ── Basis-Reset ── */
 *{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100%;min-height:100vh;display:flex;flex-direction:column;overflow:hidden;}
 button{font-family:inherit;cursor:pointer;transition:opacity .15s,transform .1s;}
 button:active{transform:scale(.96);}
 input,select{font-family:inherit;background:var(--card2);color:var(--text);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;width:100%;outline:none;transition:border-color .15s;}
@@ -582,8 +582,7 @@ async function fetchMedImageFromWeb(medId){
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514",max_tokens:500,
-        tools:[{type:"web_search_20250305",name:"web_search"}],
+        model:"claude-haiku-4-5-20251001",max_tokens:400,
         messages:[{role:"user",content:`Suche ein Produktfoto der deutschen Medikamentenverpackung "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" Hersteller "+med.manufacturer:""}.
 Suche auf Seiten wie shop-apotheke.com, aponeo.de, docmorris.de oder amazon.de.
 Antworte NUR mit einer einzigen direkten Bild-URL die auf .jpg, .jpeg, .png oder .webp endet. Keine anderen Texte.`}]
@@ -871,8 +870,7 @@ async function fetchPZNDataFromAPI(pzn,medName){
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-20250514",max_tokens:400,
-        tools:[{type:"web_search_20250305",name:"web_search"}],
+        model:"claude-haiku-4-5-20251001",max_tokens:400,
         messages:[{role:"user",content:`Suche exakte Daten für PZN ${pzn}${medName?` (${medName})`:""}. Nutze ifap.de oder shop-apotheke.com.
 NUR JSON: {"found":true,"name":"Name","manufacturer":"Hersteller","form":"Tabletten etc.","strength":"400 mg etc."}
 Nicht gefunden: {"found":false}`}]
@@ -983,7 +981,7 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:400,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:msgContent}]})
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:400,messages:[{role:"user",content:msgContent}]})
     });
     if(!r.ok)return;
     const data=await r.json();
@@ -2037,6 +2035,7 @@ async function runPZNValidationAll(){
   };
   // Nacheinander prüfen (1 gleichzeitig um API-Limits zu respektieren)
   for(const med of toCheck){
+    await new Promise(r=>setTimeout(r,600));// Rate-Limit Schutz
     if(lblEl())lblEl().textContent=`Prüfe: ${med.name}...`;
     // Zuerst im Cache nachschauen
     const cached=lookupPZNInCache(med.pzn);
