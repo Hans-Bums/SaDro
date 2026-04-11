@@ -1107,6 +1107,9 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
           groups.push(targetGrp);
         }
         fill.groupId=targetGrp.id;
+        // Gruppe direkt auf med anwenden und speichern
+        meds=meds.map(m=>m.id===medId?{...m,groupId:targetGrp.id}:m);
+        save();if(currentView==="list")renderList();
         if(!silent)toast("🗂️ Gruppe zugewiesen: "+bestGrp,"ok");
       }
     }
