@@ -51,7 +51,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 #nav-inner{max-width:720px;margin:0 auto;display:flex;}
 .nav-btn{flex:1;padding:11px 4px;border:none;background:none;font-size:11px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;}
 .nav-btn.active{font-weight:700;color:var(--accent);border-bottom-color:var(--accent);}
-#body{flex:1;overflow-y:auto;padding:14px;padding-bottom:90px;}
+#body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;padding-bottom:90px;}
 #body-inner{max-width:720px;margin:0 auto;}
 /* ── Wiederverwendbare Karten- und Pille-Elemente ── */
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);}
@@ -609,6 +609,7 @@ async function fetchMedImageFromWeb(medId){
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-haiku-4-5-20251001",max_tokens:400,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:`Suche ein Produktfoto der deutschen Medikamentenverpackung "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" Hersteller "+med.manufacturer:""}.
 Suche auf Seiten wie shop-apotheke.com, aponeo.de, docmorris.de oder amazon.de.
 Antworte NUR mit einer einzigen direkten Bild-URL die auf .jpg, .jpeg, .png oder .webp endet. Keine anderen Texte.`}]
@@ -970,6 +971,20 @@ async function checkMed(medId, opts={}){
       save();if(currentView==="list")renderList();
       if(issues.length){showPZNConflictDialog(medId,localData,null,issues);return;}
       if(!silent)toast("✅ "+med.name+" lokal geprüft","ok");
+      // Gruppe zuweisen (gleiche Logik)
+      if(!med.groupId||med.groupId===groups[groups.length-1]?.id){
+        const purpose2=(fill.purpose||med.purpose||localData.purpose||"").toLowerCase();
+        const name2=(med.name||"").toLowerCase();
+        const grpKw2={"Herz & Kreislauf":["herz","blutdruck","cholesterol","kardio","beta","ace"],"Schmerz & Entzündung":["schmerz","ibuprofen","diclofenac","paracetamol","aspirin","entzündung"],"Erkältung & Grippe":["erkältung","grippe","husten","schnupfen","fieber"],"Magen & Darm":["magen","darm","gastrit","sodbrennen","säure","pantoprazol","omeprazol"],"Allergie":["allergie","antihistamin","cetirizin","loratadin"],"Diabetes":["diabetes","insulin","metformin","blutzucker"],"Auge":["auge","augentropfen","glaukom","konjunktivitis"],"Haut":["haut","dermat","salbe","creme","ekzem","psoriasis"],"Psyche & Nerven":["antidepress","schlaf","beruhigung","nervosi"],"Antibiotika":["antibiotika","antibiose","amoxicillin","penicillin","infekt"],"Schilddrüse":["schilddrüse","levothyroxin","jod"],"Atemwege":["asthma","copd","inhalat","salbutamol","bronchodilat","atemweg"]};
+        for(const [gn,kws] of Object.entries(grpKw2)){
+          if(kws.some(kw=>purpose2.includes(kw)||name2.includes(kw))){
+            let tg=groups.find(g=>g.name===gn);
+            if(!tg){const gc=["#2563EB","#16A34A","#DC2626","#D97706","#7C3AED","#0891B2","#DB2777","#65A30D","#EA580C","#0284C7","#9333EA","#059669"];const ge={"Herz & Kreislauf":"❤️","Schmerz & Entzündung":"💊","Erkältung & Grippe":"🤧","Magen & Darm":"🫃","Allergie":"🌿","Diabetes":"🩸","Auge":"👁️","Haut":"🧴","Psyche & Nerven":"🧠","Antibiotika":"🦠","Schilddrüse":"🦋","Atemwege":"🫁"};const uc=groups.map(g=>g.color);const col=gc.find(c=>!uc.includes(c))||gc[groups.length%gc.length];tg={id:genId(),name:gn,emoji:ge[gn]||"💊",color:col};groups.push(tg);}
+            fill.groupId=tg.id;break;
+          }
+        }
+      }
+      med={...med,...fill};meds=meds.map(m=>m.id===medId?med:m);save();
       // Bild suchen falls keins vorhanden
       if(fetchImage&&!med.photo&&hasKey)setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
@@ -1055,6 +1070,43 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
 
     if(issues.length){showPZNConflictDialog(medId,null,p,issues);return;}
     if(!silent)toast("✅ "+med.name+" geprüft"+(Object.keys(fill).length?" – Felder ergänzt":""),"ok");
+    // Gruppe automatisch zuweisen wenn keine vorhanden
+    if(!med.groupId||med.groupId===groups[groups.length-1]?.id){
+      const purpose=(fill.purpose||med.purpose||"").toLowerCase();
+      const name=(med.name||"").toLowerCase();
+      const grpKeywords={
+        "Herz & Kreislauf":["herz","blutdruck","cholesterol","kardio","beta","ace","arrhythmie","antikoagul"],
+        "Schmerz & Entzündung":["schmerz","ibuprofen","diclofenac","paracetamol","aspirin","entzündung","rheuma","arthritis"],
+        "Erkältung & Grippe":["erkältung","grippe","husten","schnupfen","fieber","sinusitis","bronchitis","antitussivum"],
+        "Magen & Darm":["magen","darm","gastrit","sodbrennen","säure","pantoprazol","omeprazol","laxans","verstopfung","durchfall","diarrhoe"],
+        "Allergie":["allergie","antihistamin","cetirizin","loratadin","heuschnupfen","urtikaria"],
+        "Diabetes":["diabetes","insulin","metformin","blutzucker","glukose","diabetis"],
+        "Auge":["auge","augen","augentropfen","glaukom","konjunktivitis","bindehaut"],
+        "Haut":["haut","dermat","salbe","creme","ekzem","psoriasis","pilz","antimykotik"],
+        "Psyche & Nerven":["antidepress","schlaf","beruhigung","anxiolytikum","hypnotikum","nervosi","sedativum"],
+        "Antibiotika":["antibiotika","antibiose","amoxicillin","penicillin","ciproflox","infekt"],
+        "Schilddrüse":["schilddrüse","thyreoid","levothyroxin","jod"],
+        "Atemwege":["asthma","copd","inhalat","salbutamol","kortison","bronchodilat","lunge","atemweg"],
+      };
+      let bestGrp=null;
+      for(const [grpName,keywords] of Object.entries(grpKeywords)){
+        if(keywords.some(kw=>purpose.includes(kw)||name.includes(kw))){bestGrp=grpName;break;}
+      }
+      if(bestGrp){
+        let targetGrp=groups.find(g=>g.name===bestGrp);
+        if(!targetGrp){
+          // Neue Gruppe anlegen
+          const grpColors=["#2563EB","#16A34A","#DC2626","#D97706","#7C3AED","#0891B2","#DB2777","#65A30D","#EA580C","#0284C7","#9333EA","#059669"];
+          const grpEmojis={"Herz & Kreislauf":"❤️","Schmerz & Entzündung":"💊","Erkältung & Grippe":"🤧","Magen & Darm":"🫃","Allergie":"🌿","Diabetes":"🩸","Auge":"👁️","Haut":"🧴","Psyche & Nerven":"🧠","Antibiotika":"🦠","Schilddrüse":"🦋","Atemwege":"🫁"};
+          const usedColors=groups.map(g=>g.color);
+          const color=grpColors.find(c=>!usedColors.includes(c))||grpColors[groups.length%grpColors.length];
+          targetGrp={id:genId(),name:bestGrp,emoji:grpEmojis[bestGrp]||"💊",color};
+          groups.push(targetGrp);
+        }
+        fill.groupId=targetGrp.id;
+        if(!silent)toast("🗂️ Gruppe zugewiesen: "+bestGrp,"ok");
+      }
+    }
     // Bild automatisch laden wenn keins vorhanden
     if(fetchImage&&!med.photo)setTimeout(()=>fetchMedImageFromWeb(medId),600);
 
