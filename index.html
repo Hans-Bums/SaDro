@@ -616,42 +616,26 @@ async function fetchMedImageFromWeb(medId){
         model:"claude-haiku-4-5-20251001",max_tokens:400,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:`Suche ein Produktfoto der deutschen Medikamentenverpackung "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" Hersteller "+med.manufacturer:""}.
-Suche auf Seiten wie shop-apotheke.com, aponeo.de, docmorris.de oder amazon.de.
-Antworte NUR mit einer einzigen direkten Bild-URL die auf .jpg, .jpeg, .png oder .webp endet. Keine anderen Texte.`}]
+Suche auf shop-apotheke.com, aponeo.de oder docmorris.de.
+Antworte NUR mit einer einzigen direkten Bild-URL (https://...). Keine anderen Texte, kein Markdown.`}]
       })
     });
     if(!r.ok)return;
-    const data=await r.json();
-    const text=data.content.filter(c=>c.type==="text").map(c=>c.text).join("").trim();
-    // URL aus Antwort extrahieren - auch ohne Dateiendung (some CDNs)
-    const urlMatch=text.match(/https?:\/\/[^\s"'<>\n\)]+\.(jpg|jpeg|png|webp)(\?[^\s"'<>\n]*)?/i)
-                || text.match(/https?:\/\/[^\s"'<>\n\)]{20,}/);
+    const resp=await r.json();
+    const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join("").trim();
+    // URL aus Antwort extrahieren
+    const urlMatch=text.match(/https?:\/\/\S+\.(?:jpg|jpeg|png|webp)(?:\?\S*)?/i)||text.match(/https?:\/\/\S{20,}/);
     if(!urlMatch)return;
-    const imgUrl=urlMatch[0].replace(/[.,;]+$/,""); // Trailing punctuation entfernen
-    try{
-      // Bild mit no-cors laden und als Blob speichern
-      const imgResp=await fetch(imgUrl,{mode:"cors"});
-      if(!imgResp.ok||!imgResp.headers.get("content-type")?.includes("image"))return;
-      const blob=await imgResp.blob();
-      if(blob.size<1000)return; // Zu klein = kein echtes Bild
-      const base64=await new Promise(res=>{const rdr=new FileReader();rdr.onload=()=>res(rdr.result);rdr.readAsDataURL(blob);});
-      // Auf max. 400px skalieren um Speicher zu sparen
-      const scaled=await new Promise(res=>{
-        const img=new Image();img.onload=()=>{
-          const s=Math.min(1,400/Math.max(img.width,img.height));
-          const c=document.createElement("canvas");c.width=img.width*s;c.height=img.height*s;
-          c.getContext("2d").drawImage(img,0,0,c.width,c.height);
-          res(c.toDataURL("image/jpeg",.82));
-        };img.onerror=()=>res(base64);img.src=base64;
-      });
-      const currentMed=meds.find(m=>m.id===medId);
-      if(currentMed&&!currentMed.photo){
-        meds=meds.map(m=>m.id===medId?{...m,photo:scaled,photos:[scaled]}:m);
-        save();if(currentView==="list")renderList();
-        toast("📸 Online-Foto für "+med.name+" geladen","info");
-      }
-    }catch{}
-  }catch{}
+    const imgUrl=urlMatch[0].replace(/[.,;)]+$/,"");
+    if(!imgUrl.startsWith("http"))return;
+    // URL direkt speichern — kein fetch nötig, <img src> funktioniert ohne CORS
+    const currentMed=meds.find(m=>m.id===medId);
+    if(currentMed&&!currentMed.photo){
+      meds=meds.map(m=>m.id===medId?{...m,photo:imgUrl,photos:[imgUrl],photoIsUrl:true}:m);
+      save();if(currentView==="list")renderList();
+      toast("📸 Online-Foto für "+med.name+" verknüpft","ok");
+    }
+  }catch(e){console.warn("fetchMedImageFromWeb:",e);}
 }
 
 // ══════════════════════════════════════════════════════════════════
