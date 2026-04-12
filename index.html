@@ -2334,7 +2334,10 @@ function deleteUser(id){
 }
 function updateUserIndicator(){
   const el=document.getElementById("user-indicator");
-  if(el)el.textContent="👤 "+getCurrentUser().name;
+  if(!el)return;
+  const u=getCurrentUser();
+  // Einheitliche neutrale Darstellung: farbiger Punkt + Name
+  el.innerHTML=`<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span>${h(u.name)}`;
 }
 
 function showBlisterCache(){
