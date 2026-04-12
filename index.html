@@ -36,6 +36,7 @@
 }
 /* ── Basis-Reset ── */
 *{box-sizing:border-box;margin:0;padding:0;}
+html{height:100%;}
 body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 button{font-family:inherit;cursor:pointer;transition:opacity .15s,transform .1s;}
 button:active{transform:scale(.96);}
@@ -1020,7 +1021,11 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
     const text=data.content.filter(c=>c.type==="text").map(c=>c.text).join("");
     const match=text.match(/\{[\s\S]*\}/);if(!match)return;
     const p=JSON.parse(match[0]);
-    if(!p.found)return;
+    if(!p.found){
+      // Medikament nicht in DB gefunden – trotzdem Foto suchen
+      if(fetchImage&&!med.photo)setTimeout(()=>fetchMedImageFromWeb(medId),500);
+      return;
+    }
 
     // PZN im Cache speichern
     setPZNCache(p.pzn||med.pzn,p);
@@ -1767,7 +1772,7 @@ function schedSymSpell(val){
   symSpellTimer=setTimeout(async()=>{
     try{
       const raw=await callAI([{role:"user",content:`Rechtschreibung des deutschen medizinischen Begriffs: "${val}". NUR JSON: {"correct":true,"corrected":null}`}],80);
-      const p=parseJ(raw);
+      let p;try{p=parseJ(raw);}catch{return;}
       if(p.corrected&&p.corrected.toLowerCase()!==val.toLowerCase()){
         const spellEl=document.getElementById("sym-spell");if(!spellEl)return;
         spellEl.style.display="block";
@@ -1781,6 +1786,7 @@ function schedSymSpell(val){
 async function doSearch(){
   const sym=document.getElementById("sym-inp")?.value?.trim();
   if(!sym)return;
+  if(!meds.length){const el2=document.getElementById("search-res");if(el2)el2.innerHTML='<div class="alert alert-amber">Noch keine Medikamente eingetragen.</div>';return;}
   const el=document.getElementById("search-res");
   el.innerHTML=`<div style="text-align:center;padding:24px;color:var(--muted)"><span class="spin" style="font-size:20px">⟳</span><br>Analysiere...</div>`;
   try{
@@ -1797,7 +1803,7 @@ SCHRITT 2: Falls ja, suche passende Medikamente (nur medizinisch korrekte Zuordn
 Fieber→nur Antipyretika. Halsschmerzen→nur Halsmittel. Magen→nur Magenmittel. etc.
 
 NUR JSON: {"isMedical":true,"results":[{"name":"exakter Name","reason":"med. Begründung max 40 Zeichen"}],"advice":"Hinweis max 60 Zeichen"}`}],500);
-    const p=parseJ(raw);
+    let p;try{p=parseJ(raw);}catch{el.innerHTML='<div class="alert alert-amber">KI-Antwort konnte nicht verarbeitet werden.</div>';return;}
     // Eingabe ist kein medizinischer Begriff → Warnung anzeigen
     if(p.isMedical===false){el.innerHTML=`<div class="alert alert-amber" style="margin-top:8px">⚠️ <div>Bitte ein Symptom, eine Krankheit oder ein Medikament eingeben (z.B. "Kopfschmerzen", "Ibuprofen", "Erkältung").</div></div>`;return;}
     const found=p.results.map(r=>meds.find(m=>m.name.toLowerCase()===r.name.toLowerCase()||m.name.toLowerCase().includes(r.name.toLowerCase().split(" ")[0]))?{...meds.find(m=>m.name.toLowerCase()===r.name.toLowerCase()||m.name.toLowerCase().includes(r.name.toLowerCase().split(" ")[0])),reason:r.reason}:null).filter(Boolean);
@@ -1848,7 +1854,7 @@ function showStatsModal(){
     if(el)renderStatsInto(el);
   });
 }
-function renderStats(){}
+function renderStats(){openModal('<div style="font-size:15px;font-weight:700;margin-bottom:10px">📊 Statistik</div><div style="font-size:12px;color:var(--muted)">Öffne Einstellungen → Statistik öffnen für die vollständige Auswertung.</div>','center-overlay');}
 
 // Detail-Ansicht für KPI-Kacheln → öffnet im Sub-Modal (Statistik bleibt dahinter)
 function showStatDetail(grpId,title,kpiIdx,unitFilter){
@@ -2732,7 +2738,7 @@ BILD-QUALITÄT: Foto kann schräg, unscharf oder teilweise verdeckt sein – tro
 ANTWORT NUR als JSON (kein Text davor/danach):
 {"known":true,"name":"Produktname","strength":"15 mg","manufacturer":"Hersteller","purpose":"Anwendungsgebiet max 60 Zeichen","pzn":"02817656","expiryYearMonth":"2027-06","groupName":"Gruppe","count":1,"unit":"Packung","pillType":"Tablette","blisterCount":null,"pillsPerBlister":null,"totalPills":50}
 Wenn Bild komplett unlesbar (nur Hand/Finger sichtbar, kein Text): {"known":false}`}]}],1000);
-    const p=parseJ(raw);
+    let p;try{p=parseJ(raw);}catch{p={known:false};}
     if(p.known){
       let gid=groups.find(x=>x.name===p.groupName)?.id||"";
       if(!gid&&p.groupName){const ng=await autoGroup(p.groupName);if(ng)gid=ng.id;}
@@ -3409,7 +3415,7 @@ function _renderFavsModal(q){
       nonFavResults.slice(0,5).forEach(m=>{
         const g=groups.find(x=>x.id===m.groupId);
         html+=`<div class="card" style="padding:8px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000"/>`:g?`<span style="font-size:20px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:20px;flex-shrink:0">💊</span>'}
+          ${m.photo?`<img src="${m.photo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:20px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:20px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0;font-size:13px;font-weight:600">${h(m.name)}</div>
           <button class="btn btn-sm btn-primary" onclick="toggleFav('${m.id}');_renderFavsModal('${h(q)}')">⭐ Favorit</button>
         </div>`;
@@ -3428,7 +3434,7 @@ function _renderFavsModal(q){
         const g=groups.find(x=>x.id===m.groupId);
         const isEmpty=(m.count===0&&(m.totalPills===null||m.totalPills===0));
         html+=`<div class="card" style="padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
+          ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(m.name)}${m.strength?" · "+h(m.strength):""}</div>
             ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':'<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>'}
@@ -3695,7 +3701,7 @@ async function runManualDataCheck(){
   if(currentView==="list")renderList();
   toast("✓ Datenprüfung abgeschlossen","ok");
 }
-async function bgDataCheck(){}
+async function bgDataCheck(){/* Hintergrundprüfung - wird über setTimeout in runStartupCheck aufgerufen */}
 
 // ══════════════════════════════════════════════════════════════════
 // STARTUP-PRÜFUNG: Unvollständige Medikamente beim Start anzeigen
@@ -3761,6 +3767,7 @@ setInterval(()=>{
   }
 })();
 
+window._buildTime="SaDro-49 · 12.04.2026 16:04";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
