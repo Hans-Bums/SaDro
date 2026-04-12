@@ -982,6 +982,8 @@ async function checkMed(medId, opts={}){
     // ── STUFE 2: API-Call (alles in einem) ──────────────────────────
     if(!hasKey){
       if(!med.pzn&&!silent)toast("Kein API-Schlüssel – PZN unbekannt","info");
+      // Auch ohne API-Key: Foto per Websuche laden wenn gewünscht
+      if(fetchImage&&!med.photo&&apiKey&&apiKey.startsWith("sk-ant-"))setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
     }
     if(!silent)toast("🔍 Prüfe "+med.name+"...","info");
@@ -2010,7 +2012,7 @@ function renderSettings(){
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <div>
           <div style="font-weight:600;font-size:13px;margin-bottom:2px">🔄 App-Version</div>
-          <div style="font-size:11px;color:var(--muted)">SaDro · Stand: ${new Date(document.lastModified).toLocaleDateString("de-DE")||"–"}</div>
+          <div style="font-size:11px;color:var(--muted)">SaDro-48 · ${(()=>{const d=new Date(document.lastModified);return d&&d.getFullYear()>2000?d.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):"–";})()}</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="forceAppUpdate()">Aktualisieren</button>
       </div>
@@ -2886,7 +2888,11 @@ async function _doSaveMed(m,rawPhoto){
     window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
     save();closeAndRefresh();stopCam();toast(`${name} hinzugefügt ✓`);
     // 1 API-Call: PZN + alle Felder + Bild
-    if(apiKey&&apiKey.startsWith("sk-ant-"))setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
+    if(apiKey&&apiKey.startsWith("sk-ant-")){
+      setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
+      // Direkte Foto-Suche falls kein Foto vorhanden (parallel, nach 3s)
+      if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),3000);
+    }
   }
 }
 
