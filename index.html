@@ -36,7 +36,7 @@
 }
 /* ── Basis-Reset ── */
 *{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100%;min-height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 button{font-family:inherit;cursor:pointer;transition:opacity .15s,transform .1s;}
 button:active{transform:scale(.96);}
 input,select{font-family:inherit;background:var(--card2);color:var(--text);border:1.5px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;width:100%;outline:none;transition:border-color .15s;}
@@ -44,17 +44,17 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
 /* ── Layout: Kopfzeile, Navigation, Inhaltsbereich ── */
-#header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;flex-shrink:0;box-shadow:var(--shadow);}
+#header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;box-shadow:var(--shadow);position:sticky;top:0;z-index:100;}
 #header-inner{max-width:720px;margin:0 auto;height:52px;display:flex;align-items:center;justify-content:space-between;gap:12px;}
 #logo{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;}
 #logo span{color:var(--accent);}
 #logo small{color:var(--muted);font-weight:400;font-size:12px;}
 #sync-dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0;}
-#nav{background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
+#nav{background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:52px;z-index:99;}
 #nav-inner{max-width:720px;margin:0 auto;display:flex;}
 .nav-btn{flex:1;padding:11px 4px;border:none;background:none;font-size:11px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;}
 .nav-btn.active{font-weight:700;color:var(--accent);border-bottom-color:var(--accent);}
-#body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px;padding-bottom:90px;}
+#body{padding:14px;padding-bottom:90px;}
 #body-inner{max-width:720px;margin:0 auto;}
 /* ── Wiederverwendbare Karten- und Pille-Elemente ── */
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);}
@@ -204,7 +204,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 </div>
 
 <!-- ══ INHALTSBEREICH: Wird je nach aktiver Ansicht befüllt ══ -->
-<div id="body" onscroll="onBodyScroll()">
+<div id="body">
   <div id="body-inner">
     <div id="view-list"></div>
     <div id="view-search" style="display:none"></div>
@@ -215,7 +215,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 <!-- ══ AKTIONS-BUTTONS unten rechts/links ══ -->
 <button id="fab-ent" onclick="openEntModal()">Entnahme</button>
 <button id="fab-add" onclick="openAddModal()">Hinzufügen</button>
-<button id="btn-up" onclick="document.getElementById('body').scrollTop=0">▲ Nach oben</button>
+<button id="btn-up" onclick="window.scrollTo(0,0)">▲ Nach oben</button>
 <div id="toast"></div>
 
 <!-- Firebase SDK -->
@@ -546,8 +546,10 @@ function toast(msg,type="ok"){
 
 // "Nach oben"-Button einblenden beim Scrollen
 function onBodyScroll(){
+  // Wird von window.onscroll aufgerufen
+  const scrollY=window.scrollY||document.documentElement.scrollTop;
   const up=document.getElementById("btn-up");
-  if(up)up.style.display=document.getElementById("body").scrollTop>200?"block":"none";
+  if(up)up.style.display=(window.scrollY||document.documentElement.scrollTop)>200?"block":"none";
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -3783,6 +3785,7 @@ setTimeout(async()=>{
 },4000);
 // Monatliche BfArM-Aktualisierung im Hintergrund
 setTimeout(()=>checkMonthlyPZNRefresh(),8000);
+window.addEventListener("scroll",onBodyScroll);
 </script>
 </body>
 </html>
