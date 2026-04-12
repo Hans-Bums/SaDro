@@ -1115,14 +1115,11 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
 
 // App-Update erzwingen
 function forceAppUpdate(){
-  toast("🔄 Aktualisiere...", "info");
-  // Cache leeren und neu laden
+  toast("🔄 Lade neueste Version...", "info");
+  const go=()=>location.replace(location.origin+location.pathname+"?bust="+Date.now());
   if("caches" in window){
-    caches.keys().then(keys=>keys.forEach(k=>caches.delete(k)));
-  }
-  setTimeout(()=>{
-    window.location.href=window.location.href.split("?")[0]+"?v="+Date.now();
-  },500);
+    caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(go).catch(go);
+  } else { setTimeout(go,300); }
 }
 
 // Kompatibilitäts-Aliases (für bestehende Aufrufe)
@@ -2018,9 +2015,9 @@ function renderSettings(){
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <div>
           <div style="font-weight:600;font-size:13px;margin-bottom:2px">🔄 App-Version</div>
-          <div style="font-size:11px;color:var(--muted)">SaDro-48 · ${(()=>{const d=new Date(document.lastModified);return d&&d.getFullYear()>2000?d.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):"–";})()}</div>
+          <div style="font-size:11px;color:var(--muted)">${window._buildTime||"SaDro"}</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="forceAppUpdate()">Aktualisieren</button>
+        <button class="btn btn-primary btn-sm" onclick="forceAppUpdate()">🔄 Aktualisieren</button>
       </div>
     </div>
     <!-- Firebase Cloud-Sync Status -->
