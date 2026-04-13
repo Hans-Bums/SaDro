@@ -606,7 +606,9 @@ function handleAIErr(e){
 // ══════════════════════════════════════════════════════════════════
 async function fetchMedImageFromWeb(medId){
   const med=meds.find(m=>m.id===medId);
-  if(!med||med.photo)return;
+  if(!med)return;
+  // NUR überspringen wenn bereits eine Web-URL vorhanden – Kamera-Fotos nicht blockieren
+  if(med.photoIsUrl&&med.photo)return;
   const key=(apiKey||LS.get("sdro_k")||"").trim();
   if(!key||!key.startsWith("sk-ant-"))return;
   try{
@@ -632,8 +634,15 @@ Antworte NUR mit einer einzigen direkten Bild-URL (https://...). Keine anderen T
     if(!imgUrl.startsWith("http"))return;
     // URL direkt speichern — kein fetch nötig, <img src> funktioniert ohne CORS
     const currentMed=meds.find(m=>m.id===medId);
-    if(currentMed&&!currentMed.photo){
-      meds=meds.map(m=>m.id===medId?{...m,photo:imgUrl,photos:[imgUrl],photoIsUrl:true}:m);
+    if(currentMed){
+      // !! Kamera-Fotos (base64) im photos[]-Array BEIBEHALTEN !!
+      const keepPhotos=(currentMed.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
+      meds=meds.map(m=>m.id===medId?{
+        ...m,
+        photo:imgUrl,       // URL als Haupt-Anzeige-Foto
+        photoIsUrl:true,
+        photos:keepPhotos.length>0?keepPhotos:[imgUrl]  // Kamera erhalten
+      }:m);
       save();if(currentView==="list")renderList();
       toast("📸 Online-Foto für "+med.name+" verknüpft","ok");
     }
@@ -976,8 +985,8 @@ async function checkMed(medId, opts={}){
         }
       }
       med={...med,...fill};meds=meds.map(m=>m.id===medId?med:m);save();
-      // Bild suchen falls keins vorhanden
-      if(fetchImage&&!med.photo&&hasKey)setTimeout(()=>fetchMedImageFromWeb(medId),500);
+      // Web-Foto laden wenn noch kein URL-Foto vorhanden
+      if(fetchImage&&(!med.photoIsUrl||!med.photo)&&hasKey)setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
     }
 
@@ -1003,19 +1012,35 @@ Nutze shop-apotheke.com, ifap.de, aponeo.de oder docmorris.de. NUR JSON:
 {"found":true,"pzn":"8-stellig","name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"imageUrl":"https://direkte-bild-url.jpg"}
 totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Nicht gefunden: {"found":false}`;
 
+    // ── Kamera-Foto für API suchen: base64 aus photos[] bevorzugen ──
+    // med.photo kann URL sein (photoIsUrl:true) – dann ist split(",")[1] = undefined → kaputt!
+    // Korrekt: base64-Kamera-Fotos aus med.photos[] verwenden
+    const camPhotos=(med.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
+    const photoForAPI=camPhotos[0]||(
+      med.photo&&!med.photoIsUrl&&typeof med.photo==='string'&&med.photo.startsWith('data:')
+        ?med.photo:null
+    );
+
+    // Prompt: bei Foto speziell auf PZN-Barcode-Erkennung fokussieren
     let msgContent=prompt;
-    // Foto mitschicken wenn vorhanden und keine PZN (hilft bei Erkennung)
-    if(!hasPZN&&med.photo){
+    if(photoForAPI){
+      const barcodeFocus=!hasPZN
+        ?`Du siehst ein Foto einer deutschen Medikamentenverpackung.\nWICHTIG: Lese die PZN (Pharmazentralnummer) direkt vom Barcode/Etikett – suche "PZN" gefolgt von 7-8 Ziffern.\nLese dann alle weiteren Informationen.\n\n`
+        :`Du siehst ein Foto des Medikaments ${med.name}. Validiere die Daten und ergänze fehlende Felder.\n\n`;
       msgContent=[
-        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:med.photo.split(",")[1]}},
-        {type:"text",text:prompt}
+        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:photoForAPI.split(",")[1]}},
+        {type:"text",text:barcodeFocus+prompt}
       ];
     }
+
+    // Sonnet für Bildanalyse (PZN vom Foto lesen), Haiku für reine Textsuche
+    const apiModel=photoForAPI?"claude-sonnet-4-6":"claude-haiku-4-5-20251001";
+    const apiTokens=photoForAPI?600:400;
 
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:400,messages:[{role:"user",content:msgContent}]})
+      body:JSON.stringify({model:apiModel,max_tokens:apiTokens,messages:[{role:"user",content:msgContent}]})
     });
     if(!r.ok)return;
     const data=await r.json();
@@ -1023,8 +1048,8 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
     const match=text.match(/\{[\s\S]*\}/);if(!match)return;
     const p=JSON.parse(match[0]);
     if(!p.found){
-      // Medikament nicht in DB gefunden – trotzdem Foto suchen
-      if(fetchImage&&!med.photo)setTimeout(()=>fetchMedImageFromWeb(medId),500);
+      // Medikament nicht in DB – Web-Foto suchen (unabhängig ob Kamera-Foto da)
+      if(fetchImage)setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
     }
 
@@ -1109,8 +1134,8 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
         if(!silent)toast("🗂️ Gruppe zugewiesen: "+bestGrp,"ok");
       }
     }
-    // Bild automatisch laden wenn keins vorhanden
-    if(fetchImage&&!med.photo)setTimeout(()=>fetchMedImageFromWeb(medId),600);
+    // Web-Foto laden wenn noch kein URL-Foto vorhanden (Kamera-Foto reicht nicht für Anzeige)
+    if(fetchImage&&(!med.photoIsUrl||!med.photo))setTimeout(()=>fetchMedImageFromWeb(medId),600);
 
   }catch(e){handleAIErr(e);}
   finally{_checking.delete(medId);}
@@ -2158,7 +2183,9 @@ async function runPZNValidationAll(){
   // Nacheinander prüfen (1 gleichzeitig um API-Limits zu respektieren)
   for(const med of toCheck){
     await new Promise(r=>setTimeout(r,600));// Rate-Limit Schutz
-    if(lblEl())lblEl().textContent=`Prüfe: ${med.name}...`;
+    const hasCamPhoto2=(med.photos||[]).some(p=>p&&p.startsWith('data:'));
+    const lblExtra=hasCamPhoto2?' 📷':'';
+    if(lblEl())lblEl().textContent=`Prüfe${lblExtra}: ${med.name}...`;
     // Zuerst im Cache nachschauen
     const cached=lookupPZNInCache(med.pzn);
     if(cached){
@@ -3789,7 +3816,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-001 · 13.04.2026 11:16";
+window._buildTime="SaDro-002 · 13.04.2026 11:39";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
