@@ -581,7 +581,7 @@ async function callAI(messages,max_tokens=300){
   const r=await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:hasImage?"claude-sonnet-4-20250514":"claude-haiku-4-5-20251001",max_tokens,messages})
+    body:JSON.stringify({model:hasImage?"claude-sonnet-4-6":"claude-haiku-4-5-20251001",max_tokens,messages})
   });
   if(!r.ok){const b=await r.json().catch(()=>({}));throw Object.assign(new Error("HTTP "+r.status+": "+(b?.error?.message||"")),{code:"HTTP_"+r.status});}
   const d=await r.json();
@@ -1994,6 +1994,8 @@ function renderSettings(){
         </div>
         ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`:""}
       </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~450.000): nur kommerziell (ifap/Lauer). BfArM enthält ~3.000 Betäubungsmittel (kostenlos).</div>
+    </div>
     <!-- Blister-Cache -->
     <div class="card" style="padding:16px;margin-bottom:10px">
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🫧 Blister-Cache</div>
@@ -2002,8 +2004,6 @@ function renderSettings(){
         <div style="display:flex;justify-content:space-between"><span style="font-size:11px;color:var(--muted)">🫧 Gespeicherte Blistermenge</span><span style="font-size:11px;font-weight:600;color:${Object.keys(getBlisterCache()).length>0?"var(--accent)":"var(--muted)"}">${Object.keys(getBlisterCache()).length} Einträge</span></div>
       </div>
       <button class="btn btn-sm btn-full" style="background:var(--acclo);color:var(--accent)" onclick="showBlisterCache()">🫧 Blister-Cache ansehen & bearbeiten</button>
-    </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~450.000): nur kommerziell (ifap/Lauer). BfArM enthält ~3.000 Betäubungsmittel (kostenlos).</div>
     </div>
     <!-- BLOCK 2: Medikamenten-Prüfung (vereint) -->
     <div class="card" style="padding:16px;margin-bottom:10px">
@@ -3789,7 +3789,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-49 · 13.04.2026 11:03";
+window._buildTime="SaDro-001 · 13.04.2026 11:16";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
