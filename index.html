@@ -1119,10 +1119,32 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
 // App-Update erzwingen
 function forceAppUpdate(){
   toast("🔄 Lade neueste Version...", "info");
-  const go=()=>location.replace(location.origin+location.pathname+"?bust="+Date.now());
-  if("caches" in window){
-    caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).then(go).catch(go);
-  } else { setTimeout(go,300); }
+  // Schritt 1: Browser-Cache leeren
+  const clearCache=()=>{
+    if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).catch(()=>{});
+  };
+  // Schritt 2: Neue Datei direkt vom Server holen (kein Cache, kein CDN-Bypass via fetch)
+  // GitHub Pages CDN: ?v=Timestamp ändert die URL → CDN liefert frisch
+  clearCache();
+  const fresh=location.origin+location.pathname+"?v="+Date.now()+"&r="+Math.random().toString(36).slice(2);
+  // fetch mit Pragma/Cache-Control Header um CDN zu umgehen
+  fetch(fresh,{cache:"no-store",headers:{"Pragma":"no-cache","Cache-Control":"no-cache, no-store"}})
+    .then(r=>r.text())
+    .then(html=>{
+      // Versionsnummer aus der neuen Datei extrahieren
+      const match=html.match(/window\._buildTime="([^"]+)"/);
+      const newVer=match?match[1]:"?";
+      if(newVer===window._buildTime){
+        toast("✅ Bereits aktuellste Version ("+newVer+")","ok");
+      } else {
+        toast("🔄 Neue Version: "+newVer+" – lade...", "ok");
+        setTimeout(()=>location.replace(fresh),800);
+      }
+    })
+    .catch(()=>{
+      // Fallback: direkt laden
+      location.replace(fresh);
+    });
 }
 
 // Kompatibilitäts-Aliases (für bestehende Aufrufe)
@@ -3767,7 +3789,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-49 · 12.04.2026 16:04";
+window._buildTime="SaDro-49 · 13.04.2026 11:03";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
