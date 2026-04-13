@@ -273,6 +273,7 @@ function initFirebase(){
 function startFirebaseListener(){
   if(_fbListening||!initFirebase())return;
   _fbListening=true;
+  _fbDb.ref("/sadro").keepSynced(true); // Verbindung aufrecht erhalten
   _fbDb.ref("/sadro").on("value",snap=>{
     const p=snap.val();
     if(!p||!p.ts)return;
@@ -993,14 +994,14 @@ async function checkMed(medId, opts={}){
     // Prompt enthält alle Aufgaben auf einmal
     const hasPZN=!!med.pzn;
     const prompt=hasPZN
-      ?`Suche Daten für das deutsche Medikament PZN ${med.pzn}${med.name?` (Name: "${med.name}")`:""}. Nutze ifap.de oder shop-apotheke.com.
+      ?`Suche alle verfügbaren Daten für das deutsche Medikament PZN ${med.pzn}${med.name?` (Name: "${med.name}")`:""}. Nutze shop-apotheke.com, ifap.de, aponeo.de oder docmorris.de.
 NUR JSON (kein Text):
-{"found":true,"name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"pznMatch":true}
-totalPills=Gesamtanzahl Einheiten als Zahl (z.B. 20 bei "20 Tabletten", 20 bei "2x10"). Nicht gefunden: {"found":false}`
-      :`Suche PZN und Daten für das deutsche Medikament "${med.name}"${med.manufacturer?" von "+med.manufacturer:""}${med.strength?" "+med.strength:""}${med.purpose?" ("+med.purpose+")":""}.
-Nutze ifap.de oder shop-apotheke.com. NUR JSON:
-{"found":true,"pzn":"8-stellig","name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2}
-totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
+{"found":true,"name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"pznMatch":true,"imageUrl":"https://direkte-bild-url.jpg"}
+totalPills=Gesamtanzahl Einheiten als Zahl. imageUrl=direkte URL zu Produktfoto (.jpg/.png/.webp), oder null. Nicht gefunden: {"found":false}`
+      :`Suche PZN und alle Daten für das deutsche Medikament "${med.name}"${med.manufacturer?" von "+med.manufacturer:""}${med.strength?" "+med.strength:""}${med.purpose?" ("+med.purpose+")":""}.
+Nutze shop-apotheke.com, ifap.de, aponeo.de oder docmorris.de. NUR JSON:
+{"found":true,"pzn":"8-stellig","name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"imageUrl":"https://direkte-bild-url.jpg"}
+totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Nicht gefunden: {"found":false}`;
 
     let msgContent=prompt;
     // Foto mitschicken wenn vorhanden und keine PZN (hilft bei Erkennung)
@@ -1040,6 +1041,8 @@ totalPills=Gesamtanzahl als Zahl. Nicht gefunden: {"found":false}`;
     if(p.totalPills&&!med.totalPills)fill.totalPills=Number(p.totalPills)||null;
     if(p.pillsPerBlister&&!med.pillsPerBlister){fill.pillsPerBlister=Number(p.pillsPerBlister)||null;if(fill.pillsPerBlister)setBlisterPPB(med.id,fill.pillsPerBlister);}
     if(p.blisterCount&&!med.blisterCount)fill.blisterCount=Number(p.blisterCount)||null;
+    // Foto aus API-Response direkt übernehmen (kein Extra-API-Call nötig!)
+    if(p.imageUrl&&p.imageUrl.startsWith("http")&&!med.photo){fill.photo=p.imageUrl;fill.photos=[p.imageUrl];fill.photoIsUrl=true;}
 
     // Unstimmigkeiten prüfen (nur bei vorhandenen Werten)
     const issues=[];
