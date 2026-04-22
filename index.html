@@ -1191,32 +1191,30 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
 
 // App-Update erzwingen
 function forceAppUpdate(){
-  toast("🔄 Lade neueste Version...", "info");
-  // Schritt 1: Browser-Cache leeren
-  const clearCache=()=>{
-    if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).catch(()=>{});
-  };
-  // Schritt 2: Neue Datei direkt vom Server holen (kein Cache, kein CDN-Bypass via fetch)
-  // GitHub Pages CDN: ?v=Timestamp ändert die URL → CDN liefert frisch
-  clearCache();
-  const fresh=location.origin+location.pathname+"?v="+Date.now()+"&r="+Math.random().toString(36).slice(2);
-  // fetch mit Pragma/Cache-Control Header um CDN zu umgehen
-  fetch(fresh,{cache:"no-store",headers:{"Pragma":"no-cache","Cache-Control":"no-cache, no-store"}})
+  toast("🔄 Prüfe auf neue Version...", "info");
+  // Cache-Parameter nur für den fetch (Versionsprüfung), NICHT für den Reload
+  const checkUrl=location.origin+location.pathname+"?_nc="+Date.now();
+  const baseUrl=location.origin+location.pathname;
+  fetch(checkUrl,{cache:"no-store",headers:{"Pragma":"no-cache","Cache-Control":"no-cache, no-store"}})
     .then(r=>r.text())
     .then(html=>{
-      // Versionsnummer aus der neuen Datei extrahieren
       const match=html.match(/window\._buildTime="([^"]+)"/);
       const newVer=match?match[1]:"?";
       if(newVer===window._buildTime){
         toast("✅ Bereits aktuellste Version ("+newVer+")","ok");
       } else {
         toast("🔄 Neue Version: "+newVer+" – lade...", "ok");
-        setTimeout(()=>location.replace(fresh),800);
+        // Browser-Cache leeren, dann mit der sauberen Basis-URL neu laden
+        const doClear=("caches" in window)
+          ?caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k))))
+          :Promise.resolve();
+        doClear.finally(()=>setTimeout(()=>location.replace(baseUrl),600));
       }
     })
     .catch(()=>{
-      // Fallback: direkt laden
-      location.replace(fresh);
+      // Fallback: Cache leeren + sauber neuladen
+      if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).finally(()=>location.replace(baseUrl));
+      else location.replace(baseUrl);
     });
 }
 
@@ -2106,4 +2104,4 @@ function renderSettings(){
     <div class="card" style="padding:16px;margin-bottom:10px">
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🔍 Medikamenten-Prüfung</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Prüft und ergänzt in <b>einem Schritt</b>: PZN, Name, Hersteller, Stärke, Anwendung, Einheit. Lädt danach automatisch ein Foto wenn keins vorhanden.</div>
-      <div class="alert alert-blue" style="margin-bottom:10px">💡 <div>In der Übersicht auf <b>PZN-Badge</b> oder <b>„+ PZN suchen"</b> klicken → Einzelprüfung (lokal = kostenlos).</div></d
+      <div class="alert alert-blue" style="margin-bottom:10px">💡 <div>In der Übersicht auf <b>PZN-Badge</b> oder <b>„+ PZN suchen"</b> klicken → Einzelprü
