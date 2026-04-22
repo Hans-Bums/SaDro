@@ -90,7 +90,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 /* ── Medikamenten-Zeile in der Übersicht ── */
 .med-row{padding:10px 13px;display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid var(--border);}
 .med-row:last-child{border-bottom:none;}
-.med-thumb{min-width:51px;max-width:120px;width:68px;height:68px;border-radius:10px;background:var(--faint);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;overflow:hidden;}
+.med-thumb{min-width:60px;max-width:120px;width:72px;height:72px;border-radius:10px;background:var(--faint);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;overflow:hidden;}
 .med-thumb img{width:100%;height:100%;object-fit:contain;background:#000;}
 /* ── Ein/Aus-Schalter (Toggle) ── */
 .toggle{width:40px;height:22px;border-radius:11px;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;border:none;}
@@ -120,7 +120,9 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .fade{animation:fadeUp .18s ease;}
 /* ── Toast-Benachrichtigung ── */
-#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:9px 18px;border-radius:20px;font-size:12px;font-weight:600;z-index:999;white-space:nowrap;box-shadow:var(--shadowmd);display:none;pointer-events:none;}
+#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:9px 18px;border-radius:20px;font-size:12px;font-weight:600;z-index:999;box-shadow:var(--shadowmd);display:none;pointer-events:none;max-width:92vw;overflow:hidden;white-space:nowrap;}
+@keyframes sdro-ticker{0%{transform:translateX(110%)}100%{transform:translateX(-110%)}}
+.toast-tick{display:inline-block;white-space:nowrap;animation:sdro-ticker 9s linear infinite;padding-right:30px;}
 /* ── Bezeichnung über Eingabefeldern ── */
 .lbl{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.6px;}
 .fw{margin-bottom:12px;}
@@ -346,11 +348,13 @@ async function syncPull(){
   }
 }
 
-// Firebase starten sobald SDK geladen
+// Firebase starten sobald SDK geladen – Daten bei Start synchronisieren
 setTimeout(()=>{
-  if(initFirebase()){startFirebaseListener();}
-  else{setTimeout(()=>{if(initFirebase())startFirebaseListener();},2000);}
+  if(initFirebase()){startFirebaseListener();setTimeout(()=>syncPull(),800);}
+  else{setTimeout(()=>{if(initFirebase()){startFirebaseListener();setTimeout(()=>syncPull(),800);}},2000);}
 },500);
+// Echtzeit-Sync: Bei Tab-Fokus Daten abrufen
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&typeof _fbDb!=="undefined"&&_fbDb){syncPull();}});
 
 // Falls kein User existiert, Standarduser anlegen
 if(!users.length){users=[{id:"u1",name:"Standard"}];saveUsers();}
@@ -438,8 +442,8 @@ const DEF_GROUPS=[
 
 // Standard-Medikamente für Demo-Zwecke
 const DEF_MEDS=[
-  {id:"m1",name:"Ibuprofen 400",purpose:"Schmerzen, Fieber, Entzündungen",pzn:"04574804",count:2,unit:"Packung",pillUnit:"Tablette",pillsPerBlister:50,totalPills:100,groupId:"g1",lowStock:false,storedSince:"2026-04-01",expiryDate:"2026-08-31",photo:null},
-  {id:"m2",name:"Grippostad C",purpose:"Erkältung & Grippe",pzn:"00237873",count:1,unit:"Packung",pillUnit:"Kapsel",pillsPerBlister:24,totalPills:24,groupId:"g2",lowStock:false,storedSince:"2026-04-01",expiryDate:"2027-03-31",photo:null},
+  {id:"m1",name:"Ibuprofen 400",activeIngredient:"Ibuprofen",purpose:"Schmerzen, Fieber, Entzündungen",pzn:"04574804",count:2,unit:"Packung",pillUnit:"Tablette",pillsPerBlister:50,totalPills:100,groupId:"g1",lowStock:false,storedSince:"2026-04-01",expiryDate:"2026-08-31",photo:null},
+  {id:"m2",name:"Grippostad C",activeIngredient:"Vitamin C, Paracetamol",purpose:"Erkältung & Grippe",pzn:"00237873",count:1,unit:"Packung",pillUnit:"Kapsel",pillsPerBlister:24,totalPills:24,groupId:"g2",lowStock:false,storedSince:"2026-04-01",expiryDate:"2027-03-31",photo:null},
 ];
 
 // ══════════════════════════════════════════════════════════════════
@@ -448,7 +452,9 @@ const DEF_MEDS=[
 let favs   = LS.get("sdro_favs") || [];
 let groups = LS.get("sdro_g")    || JSON.parse(JSON.stringify(DEF_GROUPS));
 let meds   = LS.get("sdro_m")    || JSON.parse(JSON.stringify(DEF_MEDS));
-let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30};
+let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30,lowStockCount:1,lowStockUnit:"Packung"};
+if(!cfg.lowStockCount)cfg.lowStockCount=1;
+if(!cfg.lowStockUnit)cfg.lowStockUnit="Packung";
 let apiKey = LS.get("sdro_k")    || "";
 
 // ── Favoriten-Verwaltung ──
@@ -538,9 +544,11 @@ function h(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replac
 function genId(){return "id_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);}
 
 // Toast-Meldung anzeigen (kurze Benachrichtigung unten)
+// ══ Toast: kurz=normal, lang=Laufschrift ══
 function toast(msg,type="ok"){
   const el=document.getElementById("toast");
-  el.textContent=msg;
+  const isLong=(typeof msg==="string"&&msg.length>52);
+  if(isLong){el.innerHTML="";const sp=document.createElement("span");sp.className="toast-tick";sp.textContent=msg;el.appendChild(sp);}else{el.textContent=msg;}
   el.style.background=type==="warn"?"var(--red)":type==="info"?"var(--accent)":"var(--green)";
   el.style.color="#fff";el.style.display="block";
   clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",3400);
@@ -783,7 +791,19 @@ async function startPZNDownload(){
   const result=await downloadPZNList(msg=>{if(st)st.textContent="⏳ "+msg;});
   if(st)st.style.display="none";
   if(result.success){toast("✓ "+result.count+" BfArM-Einträge geladen","ok");renderSettings();}
-  else toast("Fehler: "+result.error,"warn");
+  else{
+    // Auf Mobilgeräten CORS-Proxies oft nicht verfügbar → Alternativen zeigen
+    openModal(`<div style="text-align:center;margin-bottom:12px;font-size:28px">⚠️</div>
+<div style="font-weight:700;font-size:14px;margin-bottom:8px">Direktdownload fehlgeschlagen</div>
+<div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:14px">Auf Mobilgeräten sind CORS-Proxy-Verbindungen oft gesperrt.<br><b style="color:var(--text)">Alternative: Datei manuell importieren</b></div>
+<div style="background:var(--card2);border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;line-height:1.8">
+  1️⃣ <a href="https://www2.bfarm.de/PZN/PZN.txt" target="_blank" style="color:var(--accent)">bfarm.de/PZN/PZN.txt</a> aufrufen<br>
+  2️⃣ Datei speichern / herunterladen<br>
+  3️⃣ Über „Datei importieren" unten einlesen
+</div>
+<button class="btn btn-primary btn-full" onclick="importPZNFromFile();closeModal()" style="margin-bottom:8px">📂 Datei importieren</button>
+<button class="btn btn-full" onclick="closeModal()">Schließen</button>`,"center-overlay",true);
+  }
 }
 
 // Datei hochladen (PZN.txt vom Handy)
@@ -1005,7 +1025,7 @@ async function checkMed(medId, opts={}){
     const prompt=hasPZN
       ?`Suche alle verfügbaren Daten für das deutsche Medikament PZN ${med.pzn}${med.name?` (Name: "${med.name}")`:""}. Nutze shop-apotheke.com, ifap.de, aponeo.de oder docmorris.de.
 NUR JSON (kein Text):
-{"found":true,"name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"pznMatch":true,"imageUrl":"https://direkte-bild-url.jpg"}
+{"found":true,"name":"Exakter Name","manufacturer":"Hersteller","form":"Tabletten","strength":"400 mg","purpose":"Anwendung max 60 Zeichen","pillUnit":"Tablette","totalPills":20,"pillsPerBlister":10,"blisterCount":2,"pznMatch":true,"activeIngredient":"Wirkstoff wenn bekannt","imageUrl":"https://direkte-bild-url.jpg"}
 totalPills=Gesamtanzahl Einheiten als Zahl. imageUrl=direkte URL zu Produktfoto (.jpg/.png/.webp), oder null. Nicht gefunden: {"found":false}`
       :`Suche PZN und alle Daten für das deutsche Medikament "${med.name}"${med.manufacturer?" von "+med.manufacturer:""}${med.strength?" "+med.strength:""}${med.purpose?" ("+med.purpose+")":""}.
 Nutze shop-apotheke.com, ifap.de, aponeo.de oder docmorris.de. NUR JSON:
@@ -1064,8 +1084,12 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
     if(p.manufacturer&&!med.manufacturer)fill.manufacturer=p.manufacturer;
     if(p.strength&&!med.strength)fill.strength=p.strength;
     if(p.totalPills&&!med.totalPills)fill.totalPills=Number(p.totalPills)||null;
-    if(p.pillsPerBlister&&!med.pillsPerBlister){fill.pillsPerBlister=Number(p.pillsPerBlister)||null;if(fill.pillsPerBlister)setBlisterPPB(med.id,fill.pillsPerBlister);}
+    if(p.activeIngredient&&!med.activeIngredient)fill.activeIngredient=p.activeIngredient;
+    if(p.pillsPerBlister&&!med.pillsPerBlister)fill.pillsPerBlister=Number(p.pillsPerBlister)||null;
     if(p.blisterCount&&!med.blisterCount)fill.blisterCount=Number(p.blisterCount)||null;
+    // Blister-Cache: NUR schreiben wenn blisterCount > 1 bestätigt (Architektur-Regel)
+    {const _bc=Number(fill.blisterCount||p.blisterCount||med.blisterCount||0);if(fill.activeIngredient&&!med.activeIngredient){meds=meds.map(x=>x.id===medId?{...x,activeIngredient:fill.activeIngredient}:x);save();}
+        if(fill.pillsPerBlister&&_bc>1)setBlisterPPB(med.id,fill.pillsPerBlister);}
     // Foto aus API-Response direkt übernehmen (kein Extra-API-Call nötig!)
     if(p.imageUrl&&p.imageUrl.startsWith("http")&&!med.photo){fill.photo=p.imageUrl;fill.photos=[p.imageUrl];fill.photoIsUrl=true;}
 
@@ -1471,10 +1495,25 @@ async function cropWithAI(dataUrl){
 let filterGrp=null;
 let expanded=LS.get("sdro_exp")||{};
 
+// ══ Schwellenwert-Prüfung für Bestandswarnung ══
+function isLowStock(med){
+  const threshold=Number(cfg.lowStockCount)||1;
+  const tUnit=cfg.lowStockUnit||"Packung";
+  if(tUnit==="Blister"){
+    const ppb=getBlisterPPB(med);
+    if(ppb&&med.totalPills!=null)return med.totalPills<=ppb*threshold;
+    return false;
+  }
+  const pillUnits=["Tablette","Kapsel","Ampulle","Tropfen","ml"];
+  if(pillUnits.includes(tUnit)&&med.totalPills!=null)return med.totalPills<=threshold;
+  if(tUnit===med.unit)return med.count<=threshold;
+  return med.count<=threshold; // Fallback
+}
+
 function renderList(){
   const el=document.getElementById("view-list");
   const soon=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<cfg.expiryDays;});
-  const lowSt=meds.filter(m=>m.lowStock);
+  const lowSt=meds.filter(m=>isLowStock(m));
   let html="";
 
   // Kopfzeile mit Problemanzeige (kein Statistik-Button – ist in Einstellungen)
@@ -1488,7 +1527,7 @@ function renderList(){
   </div>`;
 
   // Warnmeldungen bei Lagerbestand und Ablauf
-  if(lowSt.length&&cfg.notifyLowStock)html+=`<div class="alert alert-red">⚠️ <div><b style="color:var(--red)">Nur 1 Einheit:</b> ${lowSt.map(m=>h(m.name)).join(", ")}</div></div>`;
+  if(lowSt.length&&cfg.notifyLowStock)html+=`<div class="alert alert-red">⚠️ <div><b style="color:var(--red)">Fast leer (≤${cfg.lowStockCount||1} ${cfg.lowStockUnit||"Packung"}):</b> ${lowSt.map(m=>h(m.name)).join(", ")}</div></div>`;
   if(soon.length)html+=`<div class="alert alert-amber">⏳ <div><b style="color:var(--amber)">Läuft bald ab:</b> ${soon.map(m=>h(m.name)).join(", ")}</div></div>`;
 
   // Filter-Chips für Gruppen-Filterung
@@ -1530,7 +1569,7 @@ function renderList(){
           :`<span style="font-size:10px;color:var(--red)">⏰ kein MHD</span>`;
         // Thumbnail: schwarzer Hintergrund wenn Bild kleiner als Rahmen
         const thumbHtml=med.photo
-          ?`<img src="${med.photo}" onclick="showPhotoModal('${med.id}')" onload="const r=this.naturalWidth/this.naturalHeight;this.style.width=r>1.25?'108px':r<0.8?'51px':'68px'" style="cursor:pointer;height:68px;border-radius:10px;object-fit:cover;border:2px solid var(--border);background:#000;flex-shrink:0"/>`
+          ?`<img src="${med.photo}" onclick="showPhotoModal('${med.id}')" style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:contain;border:2px solid var(--border);background:#000;flex-shrink:0"/>`
           :`<div class="med-thumb" onclick="openMedActions('${med.id}')" style="cursor:pointer;border:2px dashed var(--border);position:relative" title="Kein Foto – klicken für Optionen">
               <span style="font-size:24px">${g.emoji}</span>
               <div style="position:absolute;bottom:2px;right:2px;background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700">+</div>
@@ -1538,7 +1577,8 @@ function renderList(){
         html+=`<div class="med-row" style="${border}">
           ${thumbHtml}
           <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:13px;margin-bottom:2px">${h(med.name)}${isFav(med.id)?'<span title="Favorit" style="font-size:11px;margin-left:3px">⭐</span>':''} ${med.strength?" <span style=\"font-size:11px;color:var(--muted);font-weight:400\">"+h(med.strength)+"</span>":""}</div>
+            <div style="font-weight:600;font-size:13px;margin-bottom:1px">${h(med.name)}${isFav(med.id)?'<span title="Favorit" style="font-size:11px;margin-left:3px">⭐</span>':''} ${med.strength?" <span style=\"font-size:11px;color:var(--muted);font-weight:400\">"+h(med.strength)+"</span>":""}</div>
+            ${med.activeIngredient?`<div style="font-size:10px;color:var(--accent);font-weight:500;margin-bottom:2px">${h(med.activeIngredient)}</div>`:""}
             <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:3px">
               <span style="font-weight:700;font-size:13px">${med.count} <span style="font-weight:400;color:var(--muted);font-size:12px">${h(med.unit)}</span></span>
               ${pillLine}
@@ -1553,7 +1593,7 @@ function renderList(){
                 return `<span title="${badgeTip}" onclick="openMedActions('${med.id}')" style="font-size:10px;font-family:monospace;color:${badgeCol};background:${badgeBg};padding:1px 6px;border-radius:20px;border:1px solid ${badgeCol}44;cursor:pointer">${badgeIcon}PZN ${h(med.pzn)}</span>`;
               })():`<span onclick="openMedActions('${med.id}')" title="Keine PZN – klicken zum Suchen" style="font-size:10px;color:var(--muted);background:var(--faint);padding:1px 6px;border-radius:20px;border:1px dashed var(--border);cursor:pointer">+ PZN suchen</span>`}
               ${expLine}
-              ${(()=>{const isLow=med.totalPills!=null?(med.totalPills<=5&&med.count<=1):(med.lowStock&&med.count<=1);return isLow?pill("⚠ fast leer","var(--red)","var(--redlo)"):"";})()} 
+              ${isLowStock(med)?pill("⚠ fast leer","var(--red)","var(--redlo)"):""} 
               ${exp&&exp.urgent?pill(exp.icon+" "+exp.lbl,exp.col,exp.bg):""}
             </div>
             <div style="font-size:11px;color:var(--muted)">${h(med.purpose||"")}${med.manufacturer?" · "+h(med.manufacturer):""}</div>
@@ -1611,11 +1651,17 @@ function renderPhotoGallery(){
     <!-- Gradanzeige und Drehen-Button -->
     <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px">
       <span style="font-size:11px;color:var(--muted)">Winkel:</span>
-      <input type="number" id="rot-deg-inp" value="${window._photoRot||0}" min="-360" max="360"
-             style="width:70px;text-align:center" onkeydown="if(event.key==='Enter')applyRotDeg()"/>
-      <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()">↻ Drehen</button>
-      <button class="btn btn-sm" onclick="applyRotDeg(-90)">↺ -90°</button>
-      <button class="btn btn-sm" onclick="applyRotDeg(90)">↻ +90°</button>
+      <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" title="-5°" style="min-width:36px">-5°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" title="-1°" style="min-width:32px">-1°</button>
+        <input type="text" inputmode="numeric" id="rot-deg-inp" value="${window._photoRot||0}"
+               style="width:56px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter')applyRotDeg()" placeholder="0"/>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" title="+1°" style="min-width:32px">+1°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" title="+5°" style="min-width:36px">+5°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()">↻ Anwenden</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(-90)">↺ -90°</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(90)">↻ +90°</button>
+      </div>
     </div>
     <!-- Foto mit Dreh-Griff (wie Word/PowerPoint) -->
     <div style="position:relative;background:#000;border-radius:10px;overflow:visible;margin-bottom:10px;padding-top:28px">
@@ -1693,7 +1739,9 @@ function applyRotDeg(fixedDeg){
     // +90 oder -90 als relativer Wert
     deg=(window._photoRot||0)+fixedDeg;
   }else{
-    deg=parseInt(document.getElementById("rot-deg-inp")?.value)||0;
+    const _rv=document.getElementById("rot-deg-inp")?.value??"0";
+    deg=parseInt(_rv,10);
+    if(isNaN(deg))deg=0;
   }
   window._photoRot=deg;
   const img=document.getElementById("ph-img");if(img)img.style.transform=`rotate(${deg}deg)`;
@@ -1859,7 +1907,7 @@ NUR JSON: {"isMedical":true,"results":[{"name":"exakter Name","reason":"med. Beg
     if(!found.length){html+=`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Keine passenden Medikamente in deinem Bestand gefunden.</div>`;el.innerHTML=html;return;}
     found.forEach(m=>{
       const g=groups.find(x=>x.id===m.groupId);
-      const thumb=m.photo?`<div class="med-thumb" style="width:auto"><img src="${m.photo}" alt="" onload="const r=this.naturalWidth/this.naturalHeight;const w=r>1.25?108:r<0.8?51:68;this.parentElement.style.width=w+'px';this.style.width=w+'px'" style="height:68px;border-radius:10px;object-fit:cover;background:#000"/></div>`:g?`<div class="med-thumb">${h(g.emoji)}</div>`:`<div class="med-thumb">💊</div>`;
+      const thumb=m.photo?`<div class="med-thumb" style="width:auto"><img src="${m.photo}" alt="" style="width:72px;height:72px;border-radius:10px;object-fit:contain;background:#000"/></div>`:g?`<div class="med-thumb">${h(g.emoji)}</div>`:`<div class="med-thumb">💊</div>`;
       const empty=m.count===0&&(m.totalPills===0||m.totalPills==null);
       html+=`<div class="card fade" style="padding:13px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start">
         ${thumb}
@@ -1923,7 +1971,7 @@ function renderStatsInto(el){
   const expNow=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d<0;});
   const soon=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<30;});
   const noDate=meds.filter(m=>!m.expiryDate);
-  const lowSt=meds.filter(m=>m.lowStock);
+  const lowSt=meds.filter(m=>isLowStock(m));
   const totalU=meds.reduce((s,m)=>s+m.count,0);
   const kpis=[{icon:"💊",lbl:"Medikamente",val:total,col:"var(--accent)",meds},{icon:"🚨",lbl:"Abgelaufen",val:expNow.length,col:expNow.length?"var(--red)":"var(--muted)",meds:expNow},{icon:"⏳",lbl:"< 30 Tage",val:soon.length,col:soon.length?"var(--amber)":"var(--muted)",meds:soon},{icon:"⚠️",lbl:"Fast leer",val:lowSt.length,col:lowSt.length?"var(--red)":"var(--muted)",meds:lowSt},{icon:"📅",lbl:"Kein MHD",val:noDate.length,col:noDate.length?"var(--amber)":"var(--muted)",meds:noDate},{icon:"📦",lbl:"Einheiten ges.",val:totalU,col:"var(--green)",meds}];
   const unitMap={};UNITS.forEach(u=>{const items=meds.filter(m=>m.unit===u);const c=items.reduce((s,m)=>s+m.count,0);if(c>0)unitMap[u]={count:c,items};});
@@ -2047,1791 +2095,4 @@ function renderSettings(){
           <div style="font-weight:600;font-size:13px;margin-bottom:2px">🗂️ Gruppen</div>
           <div style="font-size:11px;color:var(--muted)">${groups.length} Gruppen · ${meds.length} Medikamente</div>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="openGroupsModal()">Verwalten →</button>
-      </div>
-    </div>
-    <!-- Benutzerverwaltung -->
-    <div class="card" style="padding:14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-weight:600;font-size:13px;margin-bottom:2px">👤 Benutzer</div>
-          <div style="font-size:11px;color:var(--muted)">${users.length} Benutzer · Aktiv: <b>${getCurrentUser().name}</b></div>
-        </div>
-        <button class="btn btn-ghost btn-sm" onclick="showUserManager()">Verwalten →</button>
-      </div>
-    </div>
-    <!-- App aktualisieren -->
-    <div class="card" style="padding:14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div>
-          <div style="font-weight:600;font-size:13px;margin-bottom:2px">🔄 App-Version</div>
-          <div style="font-size:11px;color:var(--muted)">${window._buildTime||"SaDro"}</div>
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="forceAppUpdate()">🔄 Aktualisieren</button>
-      </div>
-    </div>
-    <!-- Firebase Cloud-Sync Status -->
-    <div class="card" style="padding:14px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-weight:600;font-size:13px;color:var(--accent)">☁️ Firebase Cloud-Sync</div>
-        <span id="fb-status" style="font-size:11px;color:var(--green);font-weight:600">Aktiv</span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">Echtzeit-Synchronisation mit Firebase. Alle Geräte mit dieser App teilen dieselben Daten automatisch.</div>
-      <div style="background:var(--card2);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--muted)">
-        <div style="display:flex;justify-content:space-between"><span>Letzter Sync:</span><span style="color:var(--text)">${LS.get("sdro_sync_ts")?new Date(LS.get("sdro_sync_ts")).toLocaleString("de-DE"):"–"}</span></div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px"><span>Datenbank:</span><span style="color:var(--accent)">sadro-2cd64</span></div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-primary btn-sm" style="flex:1" onclick="syncPush()">☁️ Jetzt hochladen</button>
-        <button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="syncPull()">⬇️ Jetzt laden</button>
-      </div>
-    </div>
-    <!-- API-Schlüssel -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🔑 Anthropic API-Schlüssel</div>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">Für KI-Funktionen (Foto-Analyse, PZN-Validierung, Suche) benötigt. Kostenlos bei <a href="https://console.anthropic.com" target="_blank" style="color:var(--accent)">console.anthropic.com</a>.</p>
-      <input type="password" id="key-inp" placeholder="sk-ant-api03-..." value="${h(apiKey)}" oninput="saveKey(this.value)" style="margin-bottom:6px"/>
-      <div style="font-size:11px;margin-bottom:8px;color:${keyOk?"var(--green)":"var(--red)"}">${apiKey?(keyOk?"✓ Format korrekt – gespeichert":"⚠ Muss mit sk-ant- beginnen"):"Kein Schlüssel eingegeben"}</div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn btn-ghost btn-sm" onclick="testKey()">🔑 Schlüssel testen</button>
-        <button class="btn btn-sm" style="background:var(--faint);color:var(--muted)" onclick="showTokenInfo()">💰 Token-Kosten ansehen</button>
-      </div>
-    </div>
-    <!-- Design-Auswahl -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:10px">🎨 Erscheinungsbild</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn ${cfg.theme==="light"?"btn-primary":""} btn-sm" style="flex:1" onclick="setTheme('light')">☀️ Hell</button>
-        <button class="btn ${cfg.theme==="dark"?"btn-primary":""} btn-sm" style="flex:1" onclick="setTheme('dark')">🌙 Dunkel</button>
-        <button class="btn ${cfg.theme==="auto"?"btn-primary":""} btn-sm" style="flex:1" onclick="setTheme('auto')">⚙️ System</button>
-      </div>
-    </div>
-    <!-- Benachrichtigungs-Einstellungen -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:10px">🔔 Benachrichtigungen</div>
-      ${notifRow("notifyExpiry","MHD läuft ab","Warnung bei ablaufenden Medikamenten")}
-      ${notifRow("notifyLowStock","Nur 1 Einheit","Warnung wenn fast leer")}
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <span style="font-size:12px;color:var(--muted)">Warnung ab</span>
-        <select style="width:auto" onchange="setCfg('expiryDays',parseInt(this.value))">
-          ${[7,14,30,60,90].map(d=>`<option value="${d}" ${cfg.expiryDays===d?"selected":""}>${d} Tage</option>`).join("")}
-        </select>
-        <span style="font-size:12px;color:var(--muted)">vor Ablauf</span>
-      </div>
-    </div>
-    <!-- Daten-Hinweis -->
-    <div class="card" style="padding:14px;margin-bottom:10px;background:var(--amberlo);border:1px solid var(--amber)44">
-      <div style="font-weight:600;font-size:13px;color:var(--amber);margin-bottom:6px">⚠️ Daten nur in diesem Browser gespeichert</div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">Andere Geräte sehen diese Daten nicht. Regelmäßig exportieren!</div>
-      <button class="btn btn-sm btn-ghost btn-full" onclick="importData()">📤 CSV importieren</button>
-    </div>
-    <!-- Export -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">📊 Export</div>
-      <button class="btn btn-primary btn-full" onclick="exportData()">Alle ${meds.length} Medikamente exportieren</button>
-    </div>`;
-}
-
-// Toggle-Schalter für Benachrichtigungen
-function notifRow(key,lbl,desc){
-  const on=cfg[key];
-  return`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)"><div><div style="font-weight:500;font-size:13px">${lbl}</div><div style="font-size:11px;color:var(--muted);margin-top:2px">${desc}</div></div><button class="toggle" style="background:${on?"var(--accent)":"var(--border)"}" onclick="toggleNotif('${key}')"><div class="toggle-knob" style="left:${on?18:2}px"></div></button></div>`;
-}
-async function toggleNotif(key){if(!cfg[key]){try{await Notification.requestPermission();}catch{}}cfg[key]=!cfg[key];save();toast(cfg[key]?"✓ Aktiviert":"Deaktiviert","info");renderSettings();}
-function setCfg(k,v){cfg[k]=v;save();}
-function setTheme(v){cfg.theme=v;save();applyTheme();renderSettings();}
-function saveKey(v){apiKey=v.trim();LS.set("sdro_k",apiKey);renderSettings();}
-async function testKey(){toast("Teste Schlüssel...","info");try{await callAI([{role:"user",content:"Antworte nur: OK"}],5);toast("✓ API-Schlüssel funktioniert!");}catch(e){toast("✗ "+e.message,"warn");}}
-
-// Alle Medikamente mit PZN validieren (manuell aus Settings)
-async function runPZNValidationAll(){
-  // Alle Meds prüfen – mit und ohne PZN (Daten + Bilder nachladen)
-  const skipped=LS.get("sdro_skip_val")||[];
-  const toCheck=meds.filter(m=>!skipped.includes(m.id));
-  if(!toCheck.length){toast("Keine Medikamente zu prüfen","info");return;}
-  if(!apiKey||!apiKey.startsWith("sk-ant-")){toast("Bitte zuerst API-Schlüssel eingeben","warn");setView("settings");return;}
-  // Fortschritts-Modal öffnen
-  openModal(`<div style="text-align:center;padding:10px 0">
-    <div style="font-size:28px;margin-bottom:10px">🔍</div>
-    <div style="font-size:15px;font-weight:700;margin-bottom:6px">PZN-Validierung läuft</div>
-    <div id="pzn-prog-lbl" style="font-size:12px;color:var(--muted);margin-bottom:14px">Starte...</div>
-    <div style="background:var(--faint);border-radius:20px;height:10px;overflow:hidden;margin-bottom:14px">
-      <div id="pzn-prog-bar" style="height:100%;border-radius:20px;background:var(--accent);width:0%;transition:width .4s ease"></div>
-    </div>
-    <div id="pzn-prog-results" style="max-height:200px;overflow-y:auto;text-align:left;font-size:12px"></div>
-  </div>`,"center-overlay",false);
-  const total=toCheck.length;
-  let done=0;let okCount=0;let conflictCount=0;
-  const resultsEl=()=>document.getElementById("pzn-prog-results");
-  const barEl=()=>document.getElementById("pzn-prog-bar");
-  const lblEl=()=>document.getElementById("pzn-prog-lbl");
-  const updateProgress=(name,status)=>{
-    done++;
-    const pct=Math.round(done/total*100);
-    if(barEl())barEl().style.width=pct+"%";
-    if(lblEl())lblEl().textContent=`${done} / ${total} geprüft`;
-    if(resultsEl()){
-      const icon=status==="ok"?"✅":status==="conflict"?"⚠️":status==="cached"?"💾":"❓";
-      const color=status==="ok"?"var(--green)":status==="conflict"?"var(--amber)":"var(--muted)";
-      const lbl=status==="ok"?"OK":status==="conflict"?"Unstimmigkeit":status==="cached"?"Aus Cache":"Keine Daten";
-      resultsEl().innerHTML+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span>${icon}</span><span style="flex:1;font-weight:500">${h(name)}</span><span style="color:${color};font-size:10px;font-weight:600">${lbl}</span></div>`;
-      resultsEl().scrollTop=resultsEl().scrollHeight;
-    }
-    if(status==="ok"||status==="cached")okCount++;
-    if(status==="conflict")conflictCount++;
-  };
-  // Nacheinander prüfen (1 gleichzeitig um API-Limits zu respektieren)
-  for(const med of toCheck){
-    await new Promise(r=>setTimeout(r,600));// Rate-Limit Schutz
-    const hasCamPhoto2=(med.photos||[]).some(p=>p&&p.startsWith('data:'));
-    const lblExtra=hasCamPhoto2?' 📷':'';
-    if(lblEl())lblEl().textContent=`Prüfe${lblExtra}: ${med.name}...`;
-    // Zuerst im Cache nachschauen
-    const cached=lookupPZNInCache(med.pzn);
-    if(cached){
-      // Aus Cache: Status direkt setzen ohne API
-      const norm=s=>(s||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
-      const srcWords=(cached.name||"").split(/\s+/).filter(w=>w.length>3);
-      const medWords=(med.name||"").split(/\s+/).filter(w=>w.length>3);
-      const nameOk=!cached.name||srcWords.some(w=>norm(med.name).includes(norm(w)))||medWords.some(w=>norm(cached.name||"").includes(norm(w)));
-      const status=nameOk?"cached":"conflict";
-      if(status==="cached"){
-        meds=meds.map(m=>m.id===med.id?{...m,pznStatus:"ok",pznChecked:td()}:m);
-        save();
-      }
-      updateProgress(med.name,status);
-      await new Promise(r=>setTimeout(r,100)); // Kurze Pause für UI-Update
-      continue;
-    }
-    // checkMed aufrufen (vereinte Prüfung)
-    await checkMed(med.id,{silent:true,fetchImage:true});
-    const updated=meds.find(m=>m.id===med.id);
-    updateProgress(med.name,updated?.pznStatus||"unknown");
-    await new Promise(r=>setTimeout(r,300)); // Pause zwischen API-Calls
-  }
-  // Abschluss-Status
-  if(barEl())barEl().style.background="var(--green)";
-  if(lblEl())lblEl().textContent="Abgeschlossen ✓";
-  if(resultsEl()){
-    resultsEl().innerHTML=`<div style="text-align:center;padding:12px 0;font-size:13px;font-weight:600;color:var(--green)">✅ ${okCount} OK ${conflictCount>0?`· ⚠️ ${conflictCount} Unstimmigkeit${conflictCount>1?"en":""}`:""}</div>`+resultsEl().innerHTML;
-  }
-  // Schließen-Button hinzufügen
-  const modal=document.querySelector("#modal-ov .sheet");
-  if(modal){
-    const closeBtn=document.createElement("button");
-    closeBtn.className="btn btn-primary btn-full";closeBtn.style.marginTop="14px";
-    closeBtn.textContent="Schließen";closeBtn.onclick=()=>{closeModal();renderSettings();};
-    modal.appendChild(closeBtn);
-  }
-  if(currentView==="list")renderList();
-}
-
-// PZN-Cache-Inhalt anzeigen
-function showPZNCache(){
-  const cache=getPZNCache();
-  const entries=Object.entries(cache).sort((a,b)=>(b[1].ts||0)-(a[1].ts||0));
-  let html=`<div style="font-size:15px;font-weight:700;margin-bottom:4px">💾 Gecachte PZNs</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">${entries.length} Einträge – werden 30 Tage lokal gespeichert</div>`;
-  if(!entries.length){
-    html+=`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Cache ist leer</div>`;
-  }else{
-    html+=`<div style="max-height:55vh;overflow-y:auto">`;
-    entries.forEach(([pzn,data])=>{
-      const med=meds.find(m=>m.pzn===pzn);
-      const ageDays=Math.floor((Date.now()-(data.ts||0))/864e5);
-      html+=`<div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px">
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:12px;font-family:monospace;color:var(--accent);margin-bottom:2px">PZN ${pzn}</div>
-          <div style="font-weight:500;font-size:13px;margin-bottom:2px">${h(data.name||"–")}</div>
-          <div style="font-size:11px;color:var(--muted)">${data.manufacturer?h(data.manufacturer)+" · ":""}${data.form?h(data.form)+" · ":""}${data.strength?h(data.strength)+" · ":""}Gecacht vor ${ageDays} Tag${ageDays!==1?"en":""}</div>
-          ${med?`<div style="font-size:10px;color:var(--green);margin-top:2px">✓ In Bestand: ${h(med.name)}</div>`:`<div style="font-size:10px;color:var(--muted);margin-top:2px">Nicht mehr im Bestand</div>`}
-        </div>
-        <button onclick="deletePZNCacheEntry('${pzn}')" style="border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px;flex-shrink:0;padding:2px">🗑️</button>
-      </div>`;
-    });
-    html+=`</div>`;
-  }
-  // Kein manueller Schließen-Button nötig — X-Button oben rechts schließt das Modal
-  openModal(html,"",true);
-}
-
-// Einzelnen Cache-Eintrag löschen
-function deletePZNCacheEntry(pzn){
-  const cache=getPZNCache();delete cache[pzn];LS.set("sdro_pzn_cache",cache);
-  showPZNCache(); // Modal neu rendern
-}
-
-// PZN-Cache leeren
-function clearPZNCache(){
-  LS.set("sdro_pzn_cache",{});
-  toast("PZN-Cache geleert","info");
-  renderSettings();
-}
-
-// Alle ignorierten Validierungen zurücksetzen
-// Blister-Cache anzeigen und verwalten (wie PZN-Cache)
-// ── Bestandsführungs-Ansicht ─────────────────────────────────────
-function showBestandsfuehrung(){
-  const log=getLog();
-  const user=getCurrentUser();
-  const typeIcon={add:"➕",remove:"📤",edit:"✏️"};
-  const typeLabel={add:"Hinzugefügt",remove:"Entnommen",edit:"Bearbeitet"};
-  const typeColor={add:"var(--green)",remove:"var(--red)",edit:"var(--amber)"};
-  const typeBg={add:"var(--greenlo)",remove:"var(--redlo)",edit:"var(--amberlo)"};
-
-  let filterUser="all";
-  const renderLog=(fu)=>{
-    const filtered=fu==="all"?log:log.filter(e=>e.userId===fu);
-    if(!filtered.length)return`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Noch keine Einträge</div>`;
-    return filtered.map(e=>`
-      <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
-        <div style="width:28px;height:28px;border-radius:8px;background:${typeBg[e.type]||"var(--faint)"};display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">${typeIcon[e.type]||"?"}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(e.medName)}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">${e.pzn?`PZN ${h(e.pzn)} · `:""}${h(String(e.amount))} ${h(e.unit||"")}</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:1px">👤 ${h(e.userName||"?")} · ${h(e.date)} ${h(e.time)}</div>
-        </div>
-        <span style="font-size:10px;font-weight:700;color:${typeColor[e.type]||"var(--muted)"};flex-shrink:0;margin-top:2px">${typeLabel[e.type]||e.type}</span>
-      </div>`).join("");
-  };
-
-  const userOpts=users.map(u=>`<option value="${u.id}">${h(u.name)}</option>`).join("");
-  const csvBtn=`<button class="btn btn-sm" style="font-size:11px" onclick="exportLogCSV()">📥 CSV</button>`;
-
-  openModal(`
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <div style="font-size:15px;font-weight:700">📋 Bestandsführung</div>
-      <div style="display:flex;gap:6px">${csvBtn}<button class="btn btn-sm" style="font-size:11px;background:var(--redlo);color:var(--red)" onclick="if(confirm('Log leeren?')){LS.set('sdro_log',[]);closeModal();toast('Log geleert','info');}">🗑️</button></div>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
-      <span style="font-size:11px;color:var(--muted)">User:</span>
-      <select id="log-user-filter" style="font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);flex:1" onchange="document.getElementById('log-body').innerHTML=renderLogRows(this.value)">
-        <option value="all">Alle</option>${userOpts}
-      </select>
-      <span style="font-size:11px;color:var(--muted)">${log.length} Einträge</span>
-    </div>
-    <div id="log-body" style="max-height:55vh;overflow-y:auto;margin:0 -18px;padding:0 18px">
-      ${renderLog("all")}
-    </div>
-  `,"center-overlay",true);
-  // renderLogRows global für onchange
-  window.renderLogRows=(fu)=>renderLog(fu);
-}
-
-function exportLogCSV(){
-  const log=getLog();
-  const typeDE={add:"Hinzugefügt",remove:"Entnommen",edit:"Bearbeitet"};
-  const hdr=["Typ","Medikament","PZN","Menge","Einheit","Bestand danach","User","Datum","Uhrzeit"];
-  const rows=log.map(e=>[
-    typeDE[e.type]||e.type,
-    e.medName,e.pzn||"–",String(e.amount||""),e.unit||"",
-    e.totalAfter!=null?String(e.totalAfter):"–",
-    e.userName||"Standard",e.date,e.time
-  ].map(v=>`"${String(v).replace(/"/g,"'")}"`).join(";"));
-  const csv="\uFEFF"+[hdr.join(";"),...rows].join("\r\n");
-  const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
-  a.download="SaDro_Bestand_"+td()+".csv";document.body.appendChild(a);a.click();a.remove();
-  toast(`✓ ${log.length} Einträge exportiert`);
-}
-
-// ── User-Verwaltung ──────────────────────────────────────────────
-function showUserManager(){
-  const renderUsers=()=>users.map(u=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--card2);border-radius:8px;margin-bottom:6px">
-      <div style="width:8px;height:8px;border-radius:50%;background:${u.id===currentUserId?"var(--green)":"var(--border)"}"></div>
-      <div style="flex:1;font-weight:${u.id===currentUserId?"700":"400"};font-size:13px">${h(u.name)}${u.id===currentUserId?' <span style="font-size:10px;color:var(--green)">● Aktiv</span>':""}</div>
-      <button class="btn btn-sm" style="font-size:11px" onclick="switchUser('${u.id}')">Wechseln</button>
-      ${users.length>1?`<button class="btn btn-sm" style="background:var(--redlo);color:var(--red);font-size:11px" onclick="deleteUser('${u.id}')">🗑️</button>`:""}
-    </div>`).join("");
-  openModal(`
-    <div style="font-size:15px;font-weight:700;margin-bottom:12px">👤 Benutzer</div>
-    <div id="user-list">${renderUsers()}</div>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <input id="new-user-inp" placeholder="Neuer Name..." style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--card2);color:var(--text);font-size:13px"/>
-      <button class="btn btn-primary" onclick="addUser()">+ Anlegen</button>
-    </div>
-    <button class="btn btn-full" style="margin-top:8px" onclick="closeModal()">Schließen</button>
-  `,"center-overlay",true);
-  window._refreshUserList=()=>{const ul=document.getElementById("user-list");if(ul)ul.innerHTML=renderUsers();};
-}
-function addUser(){
-  const inp=document.getElementById("new-user-inp");if(!inp)return;
-  const name=inp.value.trim();if(!name){toast("Name eingeben","warn");return;}
-  const id="u"+Date.now();users.push({id,name});saveUsers();inp.value="";
-  if(window._refreshUserList)window._refreshUserList();
-  toast(`👤 ${name} angelegt – wird synchronisiert`,"ok");
-}
-function switchUser(id){
-  currentUserId=id;saveUsers();
-  if(window._refreshUserList)window._refreshUserList();
-  const u=users.find(x=>x.id===id);
-  toast(`👤 Aktiv: ${u?.name||id}`,"info");
-  updateUserIndicator();
-}
-function deleteUser(id){
-  if(users.length<=1){toast("Mindestens 1 User nötig","warn");return;}
-  users=users.filter(u=>u.id!==id);
-  if(currentUserId===id){currentUserId=users[0].id;}
-  saveUsers();if(window._refreshUserList)window._refreshUserList();
-  toast("User gelöscht","info");updateUserIndicator();
-}
-function updateUserIndicator(){
-  const el=document.getElementById("user-indicator");
-  if(!el)return;
-  const u=getCurrentUser();
-  // Einheitliche neutrale Darstellung: farbiger Punkt + Name
-  el.innerHTML=`<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:4px;vertical-align:middle"></span>${h(u.name)}`;
-}
-
-function showBlisterCache(){
-  const cache=getBlisterCache();
-  const entries=Object.keys(cache).map(id=>{
-    const med=meds.find(m=>m.id===id);
-    return{id,ppb:cache[id],name:med?.name||"(unbekannt)"};
-  }).filter(e=>e.ppb>0).sort((a,b)=>a.name.localeCompare(b.name));
-  if(!entries.length){toast("Blister-Cache ist leer","info");return;}
-  let rows=entries.map(e=>`
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--card2);border-radius:8px;margin-bottom:6px;gap:8px">
-      <div>
-        <div style="font-weight:600;font-size:13px">${h(e.name)}</div>
-        <div style="font-size:11px;color:var(--accent);margin-top:2px">1 Blister = ${e.ppb} ${meds.find(m=>m.id===e.id)?.pillUnit||"Tabletten"}</div>
-      </div>
-      <button class="btn btn-sm" style="background:var(--redlo);color:var(--red);flex-shrink:0" onclick="deleteBlisterEntry('${e.id}')">🗑️</button>
-    </div>`).join("");
-  openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:4px">🫧 Blister-Cache</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${entries.length} gespeicherte Blistermenge${entries.length!==1?"n":""}</div>
-    ${rows}
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-full" onclick="closeModal()">Schließen</button>
-      <button class="btn btn-full" style="background:var(--redlo);color:var(--red)" onclick="clearBlisterCache()">Alle löschen</button>
-    </div>`,"center-overlay",true);
-}
-function deleteBlisterEntry(medId){
-  const cache=getBlisterCache();delete cache[medId];LS.set("sdro_blister_cache",cache);
-  // Auch im Medikament selbst löschen
-  meds=meds.map(m=>m.id===medId?{...m,pillsPerBlister:null}:m);save();
-  closeModal();toast("Blistermenge gelöscht","info");renderSettings();
-}
-function clearBlisterCache(){
-  LS.set("sdro_blister_cache",{});
-  meds=meds.map(m=>({...m,pillsPerBlister:null}));save();
-  closeModal();toast("Blister-Cache geleert","info");renderSettings();
-}
-
-function clearSkipValidation(){
-  LS.set("sdro_skip_val",[]);
-  toast("Alle Validierungen zurückgesetzt","info");
-  renderSettings();
-}
-
-// CSV-Import
-function importData(){
-  const inp=document.createElement("input");inp.type="file";inp.accept=".csv";
-  inp.onchange=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{try{const lines=ev.target.result.split("\n").filter(l=>l.trim());const headers=lines[0].split(";").map(h=>h.replace(/"/g,"").trim());const imported=lines.slice(1).map(l=>{const vals=l.split(";").map(v=>v.replace(/^"|"$/g,""));const row={};headers.forEach((h,i)=>row[h]=vals[i]||"");return{id:genId(),name:row["Name"]||"",purpose:row["Anwendung"]||"",pzn:row["PZN"]||"",count:parseInt(row["Menge"])||1,unit:"Packung",groupId:groups[0]?.id||"",lowStock:false,storedSince:td(),expiryDate:"",photo:null};}).filter(m=>m.name);if(!imported.length){toast("Keine Daten gefunden","warn");return;}if(confirm(""+imported.length+" Medikamente importieren?")){meds=[...meds,...imported];save();renderList();toast(imported.length+" Medikamente importiert");}}catch(e){toast("Import fehlgeschlagen","warn");}};reader.readAsText(file,"utf-8");};inp.click();
-}
-
-// CSV-Export aller Medikamente
-function exportData(){
-  try{
-    const rows=meds.map(m=>{const g=groups.find(x=>x.id===m.groupId);const exp=expInfo(m.expiryDate);const pillInfo=m.totalPills?String(m.totalPills):"–";return{Name:m.name,Anwendung:m.purpose||"",PZN:m.pzn||"–",Gruppe:g?.name||"–",Menge:`${m.count} ${m.unit}`,"Einzel-Einheit":m.pillUnit||"–","Stück gesamt":pillInfo,"Lagernd seit":fmtDate(m.storedSince),"Haltbar bis":fmtDate(m.expiryDate),Status:exp?.lbl||"–","Fast leer":m.lowStock?"Ja":"Nein"};});
-    const hdr=Object.keys(rows[0]||{});
-    const csv="\uFEFF"+[hdr.join(";"),...rows.map(r=>hdr.map(k=>`"${String(r[k]).replace(/"/g,"'")}"`).join(";"))].join("\r\n");
-    const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download=`SaDro_${td()}.csv`;document.body.appendChild(a);a.click();a.remove();
-    toast(`✓ ${meds.length} Medikamente exportiert`);
-  }catch(e){toast("Export fehlgeschlagen: "+e.message,"warn");}
-}
-
-// ══════════════════════════════════════════════════════════════════
-// MODAL-STEUERUNG: Dialoge öffnen und schließen
-// Modals schließen NUR per Buttons oder Klick außerhalb
-// ══════════════════════════════════════════════════════════════════
-// X-Button HTML (oben rechts in jedem Modal)
-function _xBtn(fn="closeModal()"){
-  return `<button onclick="${fn}" style="position:absolute;top:10px;right:12px;background:var(--faint);border:none;color:var(--muted);font-size:16px;cursor:pointer;line-height:1;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;z-index:5" title="Schließen">✕</button>`;
-}
-
-function openModal(inner,cls="",closeable=false){
-  let ov=document.getElementById("modal-ov");
-  if(!ov){ov=document.createElement("div");ov.id="modal-ov";ov.className="overlay";document.body.appendChild(ov);}
-  ov.className="overlay"+(cls?" "+cls:"");
-  // X-Button immer einfügen (position:relative am Sheet nötig)
-  ov.innerHTML=`<div class="sheet${cls.includes("dialog")?" dialog":""}" style="position:relative">${_xBtn()}${inner}</div>`;
-  // Außenklick: nur schließen wenn closeable=true
-  ov.onclick=e=>{if(e.target===ov&&closeable)closeModal();};
-  ov.style.display="flex";
-}
-
-function closeModal(){const ov=document.getElementById("modal-ov");if(ov)ov.style.display="none";}
-function closeAndRefresh(){closeModal();if(currentView==="list")renderList();else if(currentView==="settings")renderSettings();}
-
-// Sub-Modal: öffnet ÜBER dem bestehenden Modal (z.B. Statistik-Detail)
-// Schließen entfernt nur den Sub-Layer — Statistik bleibt sichtbar
-function openSubModal(inner,cls=""){
-  let sub=document.getElementById("modal-sub");
-  if(sub)sub.remove();
-  sub=document.createElement("div");sub.id="modal-sub";
-  sub.className="overlay center-overlay";sub.style.zIndex="300";
-  sub.innerHTML=`<div class="sheet dialog" style="position:relative;max-width:480px">${_xBtn("closeSubModal()")}${inner}</div>`;
-  sub.onclick=e=>{if(e.target===sub)closeSubModal();};
-  document.body.appendChild(sub);sub.style.display="flex";
-}
-function closeSubModal(){const s=document.getElementById("modal-sub");if(s)s.remove();}
-
-// Lösch-Bestätigung Dialog
-function confirmDel(id){
-  const m=meds.find(x=>x.id===id);if(!m)return;
-  openModal(`<div style="text-align:center;margin-bottom:12px;font-size:28px">🗑️</div><div style="font-size:15px;font-weight:700;text-align:center;margin-bottom:8px">Medikament löschen?</div><div style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:20px;line-height:1.6">„<b style="color:var(--text)">${h(m.name)}</b>" wird dauerhaft gelöscht.</div><div style="display:flex;gap:10px"><button class="btn btn-full" onclick="closeModal()" style="flex:1">Abbrechen</button><button class="btn btn-danger btn-full" onclick="doDelete('${id}')" style="flex:1">Ja, löschen</button></div>`,"center-overlay");
-}
-function doDelete(id){meds=meds.filter(m=>m.id!==id);save();closeAndRefresh();toast("Gelöscht","warn");}
-
-// ══════════════════════════════════════════════════════════════════
-// GRUPPEN-DIALOG: Neue Gruppe erstellen oder bearbeiten
-// ══════════════════════════════════════════════════════════════════
-function openGrpModal(existing,fromStats=false){
-  window._grpFromStats=fromStats;
-  const defaultColor=existing?existing.color:getUniqueColor();const grp=existing||{id:null,name:"",color:defaultColor,emoji:"💊"};
-  openModal(`<div style="font-size:16px;font-weight:700;margin-bottom:14px">${existing?"Gruppe bearbeiten":"Neue Gruppe"}</div>
-    <div class="fw"><label class="lbl">Gruppenname</label><input id="grp-name" placeholder="z.B. Vitamine" value="${h(grp.name)}"/></div>
-    <div class="fw"><label class="lbl">Farbe</label>
-      <div class="color-grid" id="grp-color-grid"></div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-        <label style="font-size:12px;color:var(--muted);font-weight:600">Eigene:</label>
-        <input type="color" id="grp-custom-color" value="${h(grp.color)}" style="width:40px;height:32px;padding:2px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:none" oninput="selectGrpColor(this.value)"/>
-        <div id="grp-color-preview" style="width:24px;height:24px;border-radius:50%;background:${h(grp.color)};border:1px solid var(--border)"></div>
-      </div>
-    </div>
-    <div class="fw"><label class="lbl">Emoji</label>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <button id="grp-emoji-sel" style="font-size:26px;padding:4px 8px;background:var(--faint);border:1px solid var(--border);border-radius:8px;cursor:pointer;line-height:1" onclick="toggleEmojiPicker()">${h(grp.emoji)}</button>
-        <span style="font-size:11px;color:var(--muted)">Klicken für Auswahl</span>
-      </div>
-      <div id="emoji-picker-wrap" style="display:none"></div>
-    </div>
-    <div style="display:flex;gap:10px">
-      <button class="btn btn-full" onclick="closeModal()" style="flex:1">Abbrechen</button>
-      <button class="btn btn-primary btn-full" onclick="saveGrp('${grp.id||""}',window._grpFromStats||false)" style="flex:2">Speichern</button>
-    </div>`,"");
-  renderColorGrid(grp.color);window._grpColor=grp.color;window._grpEmoji=grp.emoji;
-  // Farbauswahl-Input auf Startfarbe setzen
-  setTimeout(()=>{const cv=document.getElementById('grp-custom-color');if(cv)cv.value=grp.color;},50);
-}
-function renderColorGrid(sel){const el=document.getElementById("grp-color-grid");if(!el)return;el.innerHTML=COLORS.map(c=>`<div class="color-dot ${c===sel?"sel":""}" style="background:${c}" onclick="selectGrpColor('${c}')"></div>`).join("");}
-function selectGrpColor(c){window._grpColor=c;document.querySelectorAll(".color-dot").forEach(d=>{d.classList.toggle("sel",d.style.background===c||d.style.backgroundColor===c);});const cv=document.getElementById("grp-custom-color");if(cv)cv.value=c;const pv=document.getElementById("grp-color-preview");if(pv)pv.style.background=c;}
-function toggleEmojiPicker(){const wrap=document.getElementById("emoji-picker-wrap");if(!wrap)return;const show=wrap.style.display==="none";wrap.style.display=show?"block":"none";if(show)renderEmojiPicker(wrap);}
-function renderEmojiPicker(wrap){
-  const quick=["💊","💉","🩺","🌡️","🩹","🏥","🧬","🩻","🌿","❤️","⭐","📦","🧴","🫙","😷","🤧","🤒","🫀","🫁","🧠","🦴","🌸","⚡","💧","🔬","🧪"];
-  let html=`<div><div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Schnellauswahl</div><div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:8px">${quick.map(e=>`<button class="emoji-btn" onclick="pickEmoji('${e}')">${e}</button>`).join("")}</div><div style="border-top:1px solid var(--border);padding-top:8px"><div id="ep-cats" style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">`;
-  Object.keys(EMOJIS).forEach((cat,i)=>{html+=`<button class="btn btn-sm ${i===0?"btn-ghost":""}" style="border-radius:20px;font-size:10px;padding:3px 8px" onclick="showEmojiCat('${h(cat)}',this)">${h(cat)}</button>`;});
-  html+=`</div><div id="ep-grid" class="emoji-grid"></div></div></div>`;
-  wrap.innerHTML=html;showEmojiCat(Object.keys(EMOJIS)[0]);
-}
-function showEmojiCat(cat,btn){document.querySelectorAll("#ep-cats button").forEach(b=>b.classList.remove("btn-ghost"));if(btn)btn.classList.add("btn-ghost");const grid=document.getElementById("ep-grid");if(!grid)return;grid.innerHTML=(EMOJIS[cat]||[]).map(e=>`<button class="emoji-btn" onclick="pickEmoji('${e}')">${e}</button>`).join("");}
-function pickEmoji(e){window._grpEmoji=e;const sel=document.getElementById("grp-emoji-sel");if(sel)sel.textContent=e;const wrap=document.getElementById("emoji-picker-wrap");if(wrap)wrap.style.display="none";}
-function saveGrp(existingId,fromStats=false){
-  const name=document.getElementById("grp-name")?.value?.trim();if(!name){toast("Bitte Name eingeben","warn");return;}
-  const color=window._grpColor||"#3B82F6";const emoji=window._grpEmoji||"💊";
-  const dupColor=groups.find(g=>g.id!==existingId&&g.color===color);
-  if(dupColor)toast(`ℹ️ Farbe wird auch von „${dupColor.name}" verwendet`,"info");
-  if(existingId){const i=groups.findIndex(g=>g.id===existingId);if(i>=0)groups[i]={...groups[i],name,color,emoji};}
-  else{groups.push({id:genId(),name,color,emoji});}
-  save();
-  toast(existingId?"Gruppe gespeichert":`Gruppe „${name}" erstellt`);
-  if(fromStats){
-    // Zurück zur Statistik – Modal bleibt offen, nur Sub-Modal schließen
-    const sub=document.getElementById("modal-sub");if(sub)sub.remove();
-    const statsEl=document.getElementById("stats-modal-inner");
-    if(statsEl)renderStatsInto(statsEl);
-  }else{
-    closeAndRefresh();
-  }
-}
-// ══════════════════════════════════════════════════════════════════
-// HINZUFÜGEN / BEARBEITEN: Formular für Medikamente
-// Keine Auto-Capture – nur manuelle Fotos
-// Fotos werden nach dem Schießen automatisch zugeschnitten
-// ══════════════════════════════════════════════════════════════════
-let _camStream=null;let _camPhotos=[];let _medId=null;let _camFacing="environment";
-
-function openAddModal(){_medId=null;_camPhotos=[];renderAddModal({});
-  setTimeout(()=>{const btn=document.getElementById("cam-btn");if(btn&&!_camStream)camStartOrPhoto();},350);
-}
-function editMed(id){const m=meds.find(x=>x.id===id);if(!m)return;_medId=id;_camPhotos=[];renderAddModal(m);}
-
-function renderAddModal(med){
-  const isEdit=!!_medId;
-  const grpSel=groups.map(g=>`<option value="${g.id}" ${med.groupId===g.id?"selected":""}>${h(g.emoji)} ${h(g.name)}</option>`).join("");
-  openModal(`
-    <!-- Kopfzeile des Formulars -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="font-size:16px;font-weight:700">${isEdit?"Bearbeiten":"Medikament hinzufügen"}</div>
-      ${isEdit?`<button onclick="toggleFav('${med?.id||""}');this.textContent=isFav('${med?.id||""}')?' Aus Favoriten':'⭐ Favorit';this.style.color=isFav('${med?.id||""}')?' var(--muted)':'var(--amber)'" style="border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:${med&&isFav(med.id)?"var(--amber)":"var(--muted)"}">${med&&isFav(med.id)?" Aus Favoriten":"⭐ Favorit"}</button>`:""}
-    </div>
-    <!-- Tab-Auswahl: Foto oder Manuell -->
-    ${!isEdit?`<div style="display:flex;background:var(--faint);border-radius:8px;padding:3px;margin-bottom:14px;gap:2px">
-      <button class="btn" id="tab-photo" style="flex:1;font-size:12px;background:var(--accent);color:#fff" onclick="switchTab('photo')">📷 Foto</button>
-      <button class="btn" id="tab-manual" style="flex:1;font-size:12px;background:transparent;color:var(--muted)" onclick="switchTab('manual')">✏️ Manuell</button>
-    </div>`:""}
-    <!-- ── KAMERA-BEREICH ── -->
-    <div id="cam-section" ${isEdit?"style='display:none'":""}>
-      <div id="cam-view" style="position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;margin-bottom:10px;min-height:160px">
-        <video id="cam-video" style="width:100%;height:100%;object-fit:cover;display:none" playsinline muted></video>
-        <!-- Kamera-Wechsel-Button (Vorder-/Rückkamera) -->
-        <button id="cam-flip-btn" onclick="flipCamera()" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,.65);color:#fff;border:none;border-radius:20px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;display:none;z-index:5">🔄 Wechseln</button>
-        <div id="cam-placeholder" style="text-align:center;color:var(--muted);padding:14px">
-          <div style="font-size:28px;margin-bottom:6px">📷</div>
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Tipp: 3 Fotos für beste KI-Erkennung</div>
-          <div style="text-align:left;display:inline-block;font-size:11px;color:var(--muted);line-height:1.8">
-            <div>1️⃣ PZN-Barcode (Vorderseite)</div><div>2️⃣ Name &amp; Menge (Vorderseite)</div><div>3️⃣ MHD-Datum (Rückseite)</div>
-          </div>
-        </div>
-      </div>
-      <!-- Foto-Vorschau-Streifen -->
-      <div id="thumb-row" style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;min-height:0"></div>
-      <div id="cam-err" style="display:none;font-size:12px;color:var(--red);padding:8px 12px;background:var(--redlo);border-radius:8px;margin-bottom:8px"></div>
-      <!-- Kamera-Buttons: Start, Foto, Stop, Wechsel -->
-      <div style="display:flex;gap:8px;margin-bottom:10px">
-        <button class="btn btn-primary" id="cam-btn" onclick="camStartOrPhoto()" style="flex:2">📷 Kamera starten</button>
-        <button class="btn" id="cam-stop-btn" onclick="camStop()" style="flex:1;display:none">✕ Stop</button>
-      </div>
-      <!-- KI analysieren Button – erscheint sobald Fotos vorhanden -->
-      <button class="btn btn-primary btn-full" id="analyse-btn" style="display:none;margin-bottom:10px" onclick="analysePhotos()">✨ KI analysieren</button>
-      <div id="analyse-ok" style="display:none" class="alert alert-green">✓ Erkannt – bitte Daten prüfen und speichern</div>
-    </div>
-    <!-- ── FORMULAR-BEREICH ── -->
-    <div id="form-section" ${!isEdit?"style='display:none'":" "}>
-      <!-- Foto-Vorschau beim Bearbeiten -->
-      ${isEdit&&(med.photos&&med.photos.length>0||med.photo)?`
-      <div style="margin-bottom:12px">
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fotos (${(med.photos&&med.photos.length)||1}) <button onclick="showPhotoModal('${med.id}')" style="border:none;background:none;color:var(--accent);font-size:11px;cursor:pointer;font-weight:600">Bearbeiten ›</button></div>
-        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
-          ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||i===0);return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}')" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:#000"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
-          <div onclick="switchTab('photo')" style="width:56px;height:56px;border-radius:8px;border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;flex-shrink:0;color:var(--muted)" title="Foto hinzufügen">+</div>
-        </div>
-      </div>`:""}
-      <!-- KI-Info über erkannte Packung -->
-      <div id="pkg-info" style="display:none;font-size:11px;color:var(--accent);margin-bottom:4px;font-weight:500;background:var(--acclo);padding:6px 10px;border-radius:7px"></div>
-      <!-- Medikament-Name mit Stärke und Rechtschreibprüfung -->
-      <div class="fw">
-        <label class="lbl">Medikamentname <span id="spell-ind" style="font-size:10px;color:var(--accent);font-weight:400"></span></label>
-        <input id="med-name" placeholder="z.B. Ibuprofen" value="${h(med.name||"")}" oninput="onNameInput(this.value)"/>
-        <div id="spell-box" style="display:none;margin-top:8px"></div>
-      </div>
-      <!-- Stärke (mg/ml/IE etc.) und Hersteller -->
-      <div class="grid2" style="margin-bottom:12px">
-        <div><label class="lbl">Stärke <span style="font-size:10px;color:var(--muted)">(z.B. 400 mg)</span></label><input id="med-strength" placeholder="z.B. 400 mg, 10 mg/ml" value="${h(med.strength||"")}"/></div>
-        <div><label class="lbl">Hersteller</label><input id="med-maker" placeholder="z.B. Ratiopharm" value="${h(med.manufacturer||"")}"/></div>
-      </div>
-      <div class="fw"><label class="lbl">Anwendungsgebiet</label><input id="med-purpose" placeholder="z.B. Schmerzen, Fieber" value="${h(med.purpose||"")}"/></div>
-      <!-- PZN mit Scanner-Button -->
-      <div class="fw"><label class="lbl">PZN <span style="font-size:10px;color:var(--muted)">– führende Nullen werden erfasst!</span></label>
-        <input id="med-pzn" placeholder="z.B. 04574804" maxlength="8" value="${h(med.pzn||"")}"/>
-      </div>
-      <!-- Mengeneingabe: Anzahl und Einheit -->
-      <div class="grid2" style="margin-bottom:8px">
-        <div><label class="lbl">Anzahl</label><input id="med-count" type="number" min="1" value="${med.count||1}" oninput="onCountInput(this.value)"/></div>
-        <div><label class="lbl">Einheit</label><select id="med-unit">${UNITS.map(u=>`<option ${(med.unit||"Packung")===u?"selected":""}>${u}</option>`).join("")}</select></div>
-      </div>
-      <!-- Gesamtanzahl (editierbar) und Einzel-Einheit -->
-      <div class="grid2" style="margin-bottom:8px">
-        <div><label class="lbl">Gesamt-Stückzahl <span style="font-size:10px;color:var(--accent)">KI erkennt automatisch</span></label><input id="med-total-pills" type="number" min="0" placeholder="z.B. 50" value="${med.totalPills||""}"/></div>
-        <div><label class="lbl">Stück-Einheit</label>
-          <select id="med-pill-unit">
-            <option ${(med.pillUnit||"Tablette")==="Tablette"?"selected":""}>Tablette</option>
-            <option ${(med.pillUnit||"")==="Kapsel"?"selected":""}>Kapsel</option>
-            <option ${(med.pillUnit||"")==="Ampulle"?"selected":""}>Ampulle</option>
-            <option ${(med.pillUnit||"")==="ml"?"selected":""}>ml</option>
-            <option ${(med.pillUnit||"")==="Tropfen"?"selected":""}>Tropfen</option>
-            <option ${(med.pillUnit||"")==="Spray"?"selected":""}>Spray</option>
-            <option ${(med.pillUnit||"")==="Blister"?"selected":""}>Blister</option>
-          </select>
-        </div>
-      </div>
-      <!-- Blister-Felder (optional, nur wenn Blister-Struktur bekannt) -->
-      <div class="grid2" style="margin-bottom:12px">
-        <div><label class="lbl">Blister-Anzahl <span style="font-size:10px;color:var(--muted)">optional</span></label><input id="med-blister-count" type="number" min="0" placeholder="z.B. 5" value="${med.blisterCount||""}"/></div>
-        <div><label class="lbl">Tabletten/Blister <span style="font-size:10px;color:var(--muted)">optional</span></label><input id="med-pills" type="number" min="0" placeholder="z.B. 10" value="${med.pillsPerBlister||""}"/></div>
-      </div>
-      <!-- Datumsfelder: Lagerungs- und Ablaufdatum -->
-      <div class="grid2" style="margin-bottom:12px">
-        <div><label class="lbl">Lagernd seit</label><input id="med-since" type="date" value="${med.storedSince||td()}"/></div>
-        <div><label class="lbl">Haltbar bis (MHD)</label><input id="med-exp" type="date" value="${med.expiryDate||""}"/></div>
-      </div>
-      <!-- Gruppen-Auswahl -->
-      <div class="fw"><label class="lbl">Gruppe <span id="grp-ind" style="font-size:10px;color:var(--muted);font-weight:400"></span></label>
-        <select id="med-grp"><option value="">Gruppe wählen...</option>${grpSel}</select></div>
-      <!-- Nur-1-Einheit-Warnung -->
-      <div id="low-row" style="display:${(med.count||1)<=1?"flex":"none"};align-items:center;gap:10px;margin-bottom:14px;padding:9px 12px;background:var(--redlo);border-radius:8px">
-        <input type="checkbox" id="med-low" ${med.lowStock?"checked":""} style="width:15px;height:15px;cursor:pointer;accent-color:var(--red)"/>
-        <label for="med-low" style="font-size:12px;font-weight:500;cursor:pointer;color:var(--red)">Nur noch 1 Einheit verbleibend</label>
-      </div>
-    </div>
-    <!-- Aktions-Buttons: Abbrechen / Löschen / Speichern -->
-    <div style="display:flex;gap:10px;margin-top:4px">
-      ${isEdit?`<button class="btn btn-danger" style="flex:1" onclick="confirmDel('${_medId}');closeModal()">Löschen</button>`:`<button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>`}
-      <button class="btn btn-primary" id="save-btn" style="flex:2;${isEdit?"":"display:none"}" onclick="saveMed()">💾 Speichern</button>
-    </div>`,"",false);
-  if(isEdit)document.getElementById("save-btn").style.display="flex";
-}
-
-function onCountInput(v){const n=parseInt(v)||1;const row=document.getElementById("low-row");if(row)row.style.display=n<=1?"flex":"none";}
-
-// Tab zwischen Foto und Manuell wechseln
-function switchTab(t){
-  const cam=document.getElementById("cam-section");const form=document.getElementById("form-section");
-  const saveBtn=document.getElementById("save-btn");const pb=document.getElementById("tab-photo");const mb=document.getElementById("tab-manual");
-  if(t==="photo"){
-    cam.style.display="block";form.style.display="none";
-    if(pb){pb.style.background="var(--accent)";pb.style.color="#fff";}
-    if(mb){mb.style.background="transparent";mb.style.color="var(--muted)";}
-    if(saveBtn)saveBtn.style.display="none";
-  }else{
-    cam.style.display="none";form.style.display="block";
-    if(mb){mb.style.background="var(--accent)";mb.style.color="#fff";}
-    if(pb){pb.style.background="transparent";pb.style.color="var(--muted)";}
-    if(saveBtn)saveBtn.style.display="flex";
-    stopCam();
-  }
-}
-
-// ── KAMERA-FUNKTIONEN ──
-function camSetState(streaming){
-  const btn=document.getElementById("cam-btn");const stop=document.getElementById("cam-stop-btn");
-  const flip=document.getElementById("cam-flip-btn");
-  if(streaming){
-    if(btn){btn.textContent="📸 Foto aufnehmen";btn.style.background="var(--green)";}
-    if(stop)stop.style.display="";if(flip)flip.style.display="block";
-  }else{
-    if(btn){btn.textContent="📷 Kamera starten";btn.style.background="var(--accent)";}
-    if(stop)stop.style.display="none";if(flip)flip.style.display="none";
-  }
-}
-
-// Kamera zwischen Vorder- und Rückkamera wechseln
-async function flipCamera(){
-  _camFacing=_camFacing==="environment"?"user":"environment";
-  stopCam();await new Promise(r=>setTimeout(r,300));camStartOrPhoto();
-}
-
-// Kamera starten oder (wenn läuft) Foto aufnehmen
-function camStartOrPhoto(){
-  if(_camStream&&_camStream.active){takePhoto();return;}
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:_camFacing},width:{ideal:1280}}}).then(stream=>{
-    _camStream=stream;const video=document.getElementById("cam-video");
-    if(video){video.srcObject=stream;video.style.display="block";video.play();}
-    const ph=document.getElementById("cam-placeholder");if(ph)ph.style.display="none";
-    const err=document.getElementById("cam-err");if(err)err.style.display="none";
-    camSetState(true);
-  }).catch(()=>{
-    const err=document.getElementById("cam-err");
-    if(err){err.textContent="Kamera-Zugriff verweigert. In Chrome: Adressleiste → ⚠️ → Kamera → Erlauben";err.style.display="block";}
-    camSetState(false);_camStream=null;
-  });
-}
-function camStop(){stopCam();camSetState(false);}
-
-// Foto aufnehmen, automatisch zuschneiden und als Vorschau hinzufügen
-async function takePhoto(){
-  const video=document.getElementById("cam-video");if(!video||!_camStream)return;
-  const canvas=document.createElement("canvas");canvas.width=video.videoWidth;canvas.height=video.videoHeight;
-  canvas.getContext("2d").drawImage(video,0,0);
-  const raw=canvas.toDataURL("image/jpeg",.88);
-  const result=await autoCropPhoto(raw);
-  toast("📸 Foto aufgenommen","info");
-  const compressed=await new Promise(res=>{
-    const img=new Image();img.onload=()=>{
-      const s=Math.min(1,800/img.width);const c=document.createElement("canvas");
-      c.width=img.width*s;c.height=img.height*s;c.getContext("2d").drawImage(img,0,0,c.width,c.height);
-      res(c.toDataURL("image/jpeg",.78));
-    };img.src=result.url;
-  });
-  _camPhotos.push(compressed);
-  updateThumbs();document.getElementById("analyse-btn").style.display="block";
-}
-
-// Foto-Vorschau-Streifen aktualisieren
-function updateThumbs(){
-  const row=document.getElementById("thumb-row");if(!row)return;
-  row.innerHTML=_camPhotos.map((p,i)=>`<div style="position:relative;flex-shrink:0"><img src="${p}" style="width:52px;height:52px;border-radius:7px;object-fit:cover;border:2px solid var(--accent);background:#000"/><button style="position:absolute;top:-4px;right:-4px;width:17px;height:17px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center" onclick="removePhoto(${i})">✕</button></div>`).join("");
-}
-function removePhoto(i){_camPhotos=_camPhotos.filter((_,j)=>j!==i);updateThumbs();if(!_camPhotos.length)document.getElementById("analyse-btn").style.display="none";}
-function stopCam(){if(_camStream){_camStream.getTracks().forEach(t=>t.stop());_camStream=null;}const v=document.getElementById("cam-video");if(v)v.style.display="none";}
-
-// ══════════════════════════════════════════════════════════════════
-// KI-ANALYSE: Fotos auswerten und Formular automatisch befüllen
-// Ablaufdatum wird auf Ende des Monats gesetzt
-// Stückzahl pro Packung wird erkannt und eingetragen
-// ══════════════════════════════════════════════════════════════════
-async function analysePhotos(){
-  if(!_camPhotos.length)return;
-  stopCam();const btn=document.getElementById("analyse-btn");
-  if(btn)btn.innerHTML=`<span class="spin">⟳</span> KI analysiert...`;
-  try{
-    const grpNames=groups.map(g=>g.name).join(", ");
-    const imgParts=_camPhotos.map(p=>({type:"image",source:{type:"base64",media_type:"image/jpeg",data:p.split(",")[1]}}));
-    const raw=await callAI([{role:"user",content:[...imgParts,{type:"text",text:`Du bist ein präziser OCR-Spezialist für deutsche Medikamentenverpackungen. Lese JEDEN sichtbaren Text auf dem Foto.
-
-PFLICHT-FELDER (immer ausfüllen wenn sichtbar):
-1. PZN: Suche "PZN" + 7-8 Ziffern ODER Barcode-Nummer. Führende Nullen BEIBEHALTEN (z.B. "02817656")
-2. NAME: Exakt wie aufgedruckt (z.B. "MirtaLich 15 mg Filmtabletten")
-3. STÄRKE: z.B. "15 mg", "400 mg", "10 mg/ml" – als eigenes Feld strength
-4. MENGE:
-   - Einzelne Zahl + Einheit: "50 Tabletten" → totalPills:50, pillType:"Tablette"
-   - Blister: "5 Blister zu 10" → blisterCount:5, pillsPerBlister:10, totalPills:50
-   - Wenn unklar: totalPills als beste Schätzung eintragen
-5. HERSTELLER: Firmenname (z.B. "1 A Pharma", "Heumann", "Ratiopharm")
-6. MHD: Format MM/JJJJ oder EXP MM/YY → als "JJJJ-MM" ausgeben
-7. GRUPPE aus dieser Liste: ${grpNames}
-
-BILD-QUALITÄT: Foto kann schräg, unscharf oder teilweise verdeckt sein – trotzdem versuchen zu lesen!
-
-ANTWORT NUR als JSON (kein Text davor/danach):
-{"known":true,"name":"Produktname","strength":"15 mg","manufacturer":"Hersteller","purpose":"Anwendungsgebiet max 60 Zeichen","pzn":"02817656","expiryYearMonth":"2027-06","groupName":"Gruppe","count":1,"unit":"Packung","pillType":"Tablette","blisterCount":null,"pillsPerBlister":null,"totalPills":50}
-Wenn Bild komplett unlesbar (nur Hand/Finger sichtbar, kein Text): {"known":false}`}]}],1000);
-    let p;try{p=parseJ(raw);}catch{p={known:false};}
-    if(p.known){
-      let gid=groups.find(x=>x.name===p.groupName)?.id||"";
-      if(!gid&&p.groupName){const ng=await autoGroup(p.groupName);if(ng)gid=ng.id;}
-      // Stückzahl berechnen
-      const totalP=p.blisterCount&&p.pillsPerBlister?p.blisterCount*p.pillsPerBlister:(p.totalPills||null);
-      const pillTypeStr=p.pillType||"Tablette";
-      // Ablaufdatum auf Ende des Monats setzen (z.B. 2026-06 → 2026-06-30)
-      const expiryDate=p.expiryYearMonth?toEndOfMonth(p.expiryYearMonth+"-01"):"";
-      // Info-Zeile über erkannte Menge
-      const info=totalP?`${totalP} ${pillTypeStr} erkannt`:(p.blisterCount?`${p.blisterCount} Blister`:"");
-      window._blisterCount=p.blisterCount||null;window._pillsPerBlister=p.pillsPerBlister||null;
-      window._totalPills=totalP;window._pillType=pillTypeStr;
-      switchTab("manual");
-      setTimeout(()=>{
-        setVal("med-name",p.name||"");
-        if(p.strength)setVal("med-strength",p.strength);
-        if(p.manufacturer)setVal("med-maker",p.manufacturer);;setVal("med-purpose",p.purpose||"");
-        setVal("med-pzn",(p.pzn&&p.pzn!=="null")?p.pzn:"");
-        setVal("med-count",p.count||1);setVal("med-exp",expiryDate);
-        // Stückzahl pro Blister NUR bei echter Blister-Struktur (blisterCount>1)
-        // Gesamt-Stückzahl immer eintragen (sichtbar und editierbar)
-        if(totalP)setVal("med-total-pills",totalP);
-        // Blister-Felder nur wenn echte Struktur bekannt
-        if(p.blisterCount&&p.blisterCount>1){setVal("med-blister-count",p.blisterCount);if(p.pillsPerBlister)setVal("med-pills",p.pillsPerBlister);}
-        // Stück-Einheit entsprechend der erkannten Form setzen
-        const pillSel=document.getElementById("med-pill-unit");
-        if(pillSel&&pillTypeStr){const opts=Array.from(pillSel.options);const match=opts.find(o=>pillTypeStr.toLowerCase().includes(o.value.toLowerCase()));if(match)pillSel.value=match.value;}
-        const grpSel=document.getElementById("med-grp");if(grpSel&&gid)grpSel.value=gid;
-        const pi=document.getElementById("pkg-info");if(pi&&info){pi.textContent="📦 KI erkannte: "+info+(expiryDate?" · MHD bis "+fmtDate(expiryDate):"");pi.style.display="block";}
-        window._addPhotos=[..._camPhotos];window._addPhoto=_camPhotos[0]||null;
-        document.getElementById("analyse-ok").style.display="block";
-        toast(`✨ ${p.name||"Medikament"} erkannt`,"info");
-      },100);
-    }else{switchTab("manual");toast("Nicht erkannt – bitte manuell eingeben","warn");}
-  }catch(e){
-    if(e.message&&(e.message.includes("credit")||e.message.includes("balance"))){toast("💳 API-Guthaben aufgebraucht","warn");}
-    else{handleAIErr(e);}
-    if(btn)btn.innerHTML="✨ KI analysieren";
-  }
-}
-function setVal(id,v){const el=document.getElementById(id);if(el)el.value=v;}
-
-// Rechtschreibprüfung für Medikamenten-Namen
-let spellTimer=null;
-function onNameInput(val){
-  clearTimeout(spellTimer);
-  document.getElementById("spell-box").style.display="none";document.getElementById("spell-ind").textContent="";
-  if(val.length<2)return;
-  document.getElementById("spell-ind").textContent="✦ prüft...";
-  spellTimer=setTimeout(async()=>{
-    try{
-      const grpNames=groups.map(g=>g.name).join(", ");
-      const raw=await callAI([{role:"user",content:`Medikament: "${val}". Gruppen: ${grpNames}.
-WICHTIG: Nur ECHTE Tippfehler korrigieren (z.B. 'Ibuprofon'→'Ibuprofen').
-Abkürzungen/Teilnamen (z.B. 'desmo','ibu','asp') sind GÜLTIG → corrected muss null sein.
-NIEMALS einen Satz als corrected ausgeben – corrected muss null oder ein Medikamentenname sein.
-NUR JSON: {"isMed":true,"correct":true,"corrected":null,"purpose":"Anwendung max 50 Zeichen","groupName":"Korrekte Gruppe","pillUnit":"Tablette oder Kapsel oder Ampulle etc."}`}],200);
-      const p=parseJ(raw);
-      document.getElementById("spell-ind").textContent="";
-      const purpEl=document.getElementById("med-purpose");if(purpEl&&p.purpose&&!purpEl.value)purpEl.value=p.purpose;
-      let gid=groups.find(x=>x.name===p.groupName)?.id||"";
-      if(!gid&&p.groupName&&p.isMed){document.getElementById("grp-ind").textContent="– KI wählt...";const ng=await autoGroup(p.groupName);if(ng)gid=ng.id;document.getElementById("grp-ind").textContent="– automatisch";}
-      if(gid){const s=document.getElementById("med-grp");if(s)s.value=gid;}
-      // Nur anzeigen wenn: corrected vorhanden, kein Satz (max 4 Wörter), nicht identisch
-      const isValidCorr=p.corrected&&p.corrected.toLowerCase()!==val.toLowerCase()&&p.corrected.split(" ").length<=4&&p.corrected.length<60;
-      if(isValidCorr){
-        const box=document.getElementById("spell-box");box.style.display="block";
-        box.innerHTML=`<div class="alert alert-amber">💡 <div style="flex:1"><b style="color:var(--amber)">Meintest du: „${h(p.corrected)}"?</b><div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-green btn-sm" onclick="document.getElementById('med-name').value='${h(p.corrected)}';document.getElementById('spell-box').style.display='none';onNameInput('${h(p.corrected)}')">✓ Übernehmen</button><button class="btn btn-sm" onclick="document.getElementById('spell-box').style.display='none'">Behalten</button></div></div></div>`;
-      }
-    }catch(e){document.getElementById("spell-ind").textContent="";}
-  },200);
-}
-// ══════════════════════════════════════════════════════════════════
-// MEDIKAMENT SPEICHERN: Neues Medikament anlegen oder bearbeiten
-// Nach dem Speichern ohne Foto: KI sucht Bild aus dem Internet
-// ══════════════════════════════════════════════════════════════════
-function saveMed(){
-  const name=document.getElementById("med-name")?.value?.trim();
-  if(!name){toast("Bitte Name eingeben","warn");return;}
-  const expiryVal=document.getElementById("med-exp")?.value;
-  if(!expiryVal){toast("⚠ Bitte Haltbarkeitsdatum (MHD) eintragen","warn");document.getElementById("med-exp")?.focus();return;}
-  const strength=document.getElementById("med-strength")?.value?.trim()||"";
-  const manufacturer=document.getElementById("med-maker")?.value?.trim()||"";
-  const count=parseInt(document.getElementById("med-count")?.value)||1;
-  const unit=document.getElementById("med-unit")?.value||"Packung";
-  const lowStock=count<=1&&(document.getElementById("med-low")?.checked||false);
-  const grpId=document.getElementById("med-grp")?.value||groups[groups.length-1]?.id;
-  const existing=meds.find(x=>x.id===_medId);
-  const pillsManual=parseInt(document.getElementById("med-pills")?.value)||0;
-  const totalPillsManual=parseInt(document.getElementById("med-total-pills")?.value)||0;
-  const blisterCountManual=parseInt(document.getElementById("med-blister-count")?.value)||0;
-  const pillUnit=document.getElementById("med-pill-unit")?.value||"Tablette";
-  const pillsPerPack=pillsManual||window._pillsPerBlister||existing?.pillsPerBlister||null;
-  const blisterCount=blisterCountManual||window._blisterCount||existing?.blisterCount||null;
-  // Gesamt: zuerst manuell eingetragen, dann berechnet, dann aus AI-Scan
-  const computedFromBlister=pillsPerPack&&blisterCount?pillsPerPack*blisterCount:null;
-  const computedFromPack=pillsPerPack&&count?count*pillsPerPack:null;
-  const finalTotal=totalPillsManual||computedFromBlister||computedFromPack||(window._totalPills||existing?.totalPills||null);
-  const countChanged=existing&&existing.count!==count;
-  const rawPhotos=(window._addPhotos&&window._addPhotos.length?window._addPhotos:(_camPhotos.length?[..._camPhotos]:(existing?.photos)||[]));
-  const rawPhoto=(window._addPhotos&&window._addPhotos[0])||(_camPhotos.length?_camPhotos[0]:null)||(existing?.photos&&existing.photos[0])||(existing?.photo)||null;
-  const m={
-    id:_medId||genId(),name,strength,manufacturer,
-    purpose:document.getElementById("med-purpose")?.value||"",
-    pzn:(()=>{const v=document.getElementById("med-pzn")?.value||"";return(v==="null"||v==="undefined")?"":v;})(),
-    count,unit,lowStock,groupId:grpId,
-    storedSince:document.getElementById("med-since")?.value||td(),
-    expiryDate:document.getElementById("med-exp")?.value||"",
-    photos:rawPhotos,photo:rawPhoto,
-    blisterCount:blisterCount,
-    pillsPerBlister:pillsPerPack,pillUnit,totalPills:finalTotal,
-  };
-  // Foto beim Speichern zuschneiden (async, dann fortfahren)
-  _doSaveMed(m,rawPhoto);
-}
-
-// Interner Speicher-Ablauf nach optionalem Crop
-async function _doSaveMed(m,rawPhoto){
-  // Kein Crop beim Speichern – Originalbild wird gespeichert
-  if(rawPhoto){m={...m,photoCropped:true};}
-  if(_medId){
-    meds=meds.map(x=>x.id===_medId?m:x);addToArchive(m);
-    // pillsPerBlister nur in Cache schreiben wenn blisterCount>1 (echte Blister-Struktur bekannt)
-    if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
-    window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
-    save();closeAndRefresh();stopCam();toast("Gespeichert ✓");
-    if(apiKey&&apiKey.startsWith("sk-ant-"))setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:!m.photo}),1500);
-  }else{
-    const _nn=s=>(s||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
-    const dup=meds.find(x=>{
-      if(m.pzn&&x.pzn&&m.pzn.replace(/^0+/,"")===x.pzn.replace(/^0+/,""))return true;
-      const na=_nn(m.name),nb=_nn(x.name);
-      if(na===nb)return true;
-      if(na.length>=6&&nb.length>=6&&na.slice(0,8)===nb.slice(0,8))return true;
-      return false;
-    });
-    if(dup){
-      _pendingMed=m;
-      openModal(`<div style="font-size:16px;font-weight:700;margin-bottom:12px">🔄 Bereits vorhanden</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6"><b style="color:var(--text)">${h(dup.name)}</b> ist bereits mit <b>${dup.count} ${dup.unit}</b> eingetragen.</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button class="btn btn-primary btn-full" onclick="mergeDup('${dup.id}')">➕ Zusammenführen (${dup.count} + ${m.count} ${m.unit})</button>
-          <button class="btn btn-full" style="background:var(--amberlo);color:var(--amber)" onclick="updateDup('${dup.id}')">📝 MHD / Foto aktualisieren</button>
-          <button class="btn btn-full" onclick="addAnyway()">➕ Als neuen Eintrag anlegen</button>
-          <button class="btn btn-full" onclick="closeModal()">Abbrechen</button>
-        </div>`,"center-overlay");
-      return;
-    }
-    meds.push(m);addToArchive(m);
-    addLogEntry("add",m,m.count,m.unit); // Bestandsführungs-Log
-    // pillsPerBlister nur in Cache wenn blisterCount>1 bekannt (z.B. "2 Blister à 10 Tabletten")
-    if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
-    window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
-    save();closeAndRefresh();stopCam();toast(`${name} hinzugefügt ✓`);
-    // 1 API-Call: PZN + alle Felder + Bild
-    if(apiKey&&apiKey.startsWith("sk-ant-")){
-      setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
-      // Direkte Foto-Suche falls kein Foto vorhanden (parallel, nach 3s)
-      if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),3000);
-    }
-  }
-}
-
-// Duplikate zusammenführen: Bestände addieren
-let _pendingMed=null;
-function mergeDup(dupId){
-  if(!_pendingMed)return;
-  meds=meds.map(m=>{
-    if(m.id!==dupId)return m;
-    const dates=[m.expiryDate,_pendingMed.expiryDate].filter(Boolean);
-    const earliestExpiry=dates.length?dates.sort()[0]:m.expiryDate; // Frühestes MHD behalten
-    const ep=m.photos&&m.photos.length?m.photos:(m.photo?[m.photo]:[]);
-    const np=_pendingMed.photos&&_pendingMed.photos.length?_pendingMed.photos:(_pendingMed.photo?[_pendingMed.photo]:[]);
-    const allPhotos=[...np,...ep.filter(p=>!np.includes(p))].slice(0,6);
-    const t1=m.totalPills||(m.pillsPerBlister&&m.count?m.count*m.pillsPerBlister:0);
-    const t2=_pendingMed.totalPills||(_pendingMed.pillsPerBlister&&_pendingMed.count?_pendingMed.count*_pendingMed.pillsPerBlister:0);
-    return{...m,count:m.count+_pendingMed.count,expiryDate:earliestExpiry,photos:allPhotos,photo:allPhotos[0]||m.photo,
-      blisterCount:_pendingMed.blisterCount||m.blisterCount,pillsPerBlister:_pendingMed.pillsPerBlister||m.pillsPerBlister,
-      totalPills:(t1+t2)||null};
-  });
-  _pendingMed=null;save();closeAndRefresh();stopCam();toast("Bestände zusammengeführt ✓");
-}
-
-// Duplikat: Nur MHD und Foto aktualisieren, Bestand bleibt
-function updateDup(dupId){
-  if(!_pendingMed)return;
-  meds=meds.map(m=>{
-    if(m.id!==dupId)return m;
-    const dates=[m.expiryDate,_pendingMed.expiryDate].filter(Boolean);const earliest=dates.length?dates.sort()[0]:m.expiryDate;
-    const ep=m.photos&&m.photos.length?m.photos:(m.photo?[m.photo]:[]);
-    const np=_pendingMed.photos&&_pendingMed.photos.length?_pendingMed.photos:(_pendingMed.photo?[_pendingMed.photo]:[]);
-    return{...m,expiryDate:earliest,photos:[...ep,...np.filter(p=>!ep.includes(p))],photo:ep[0]||m.photo,
-      blisterCount:_pendingMed.blisterCount||m.blisterCount,pillsPerBlister:_pendingMed.pillsPerBlister||m.pillsPerBlister};
-  });
-  _pendingMed=null;save();closeAndRefresh();stopCam();toast("Aktualisiert ✓");
-}
-
-// Trotzdem als neuen Eintrag anlegen
-function addAnyway(){
-  if(_pendingMed){meds.push(_pendingMed);_pendingMed=null;save();closeAndRefresh();stopCam();toast("Neu angelegt");}
-  closeModal();
-}
-// ══════════════════════════════════════════════════════════════════
-// ENTNAHME-DIALOG: Medikament aus dem Bestand entnehmen
-// Einzel-Einheit wird korrekt erkannt (pillUnit statt "Tablette")
-// Kamera startet NUR wenn Benutzer "Kamera starten" drückt
-// ══════════════════════════════════════════════════════════════════
-let _entMed=null;let _entRows=[{qty:1,unit:"Tablette"}];
-
-function openEntModal(){_entMed=null;_entRows=[{qty:1,unit:"Tablette"}];renderEntModal();}
-
-function renderEntModal(){
-  const grpIdx={};groups.forEach(g=>grpIdx[g.id]=g);
-  // Medikamenten-Liste mit Stückzahl-Info
-  const medList=meds.map((m,i)=>{
-    const g=grpIdx[m.groupId];const sel=_entMed?.id===m.id;
-    const stockInfo=m.totalPills?`${m.count} ${m.unit} · ${m.totalPills} ${m.pillUnit||"Tablette"}`:`${m.count} ${m.unit}`;
-    return`<div onclick="selectEntMed('${m.id}')" style="padding:10px 13px;border-bottom:${i<meds.length-1?"1px solid var(--border)":"none"};cursor:pointer;background:${sel?"var(--acclo)":"transparent"};display:flex;align-items:center;gap:10px">
-      <span style="font-size:18px;flex-shrink:0">${g?.emoji||"💊"}</span>
-      <div style="flex:1"><div style="font-weight:600;font-size:13px">${h(m.name)}</div><div style="font-size:11px;color:var(--muted)">${stockInfo}</div></div>
-      ${sel?`<span style="color:var(--accent);font-weight:700">✓</span>`:""}
-    </div>`;
-  }).join("");
-
-  // Entnahme-Zeilen (Menge + Einheit)
-  let rowsHtml="";
-  _entRows.forEach((row,i)=>{
-    rowsHtml+=`<div style="display:grid;grid-template-columns:1fr 1fr 32px;gap:8px;margin-bottom:8px;align-items:end">
-      <div><label class="lbl" style="margin-bottom:3px">Menge ${i>0?"(Zeile "+(i+1)+")":""}</label><input type="number" min="1" value="${row.qty}" oninput="_entRows[${i}].qty=Math.max(1,parseInt(this.value)||1);updateEntPreview()"/></div>
-      <div><label class="lbl" style="margin-bottom:3px">Einheit</label>
-        <select onchange="_entRows[${i}].unit=this.value;updateEntPreview();checkEntUnit(${i})">${getEntUnitsFor(_entMed).map(u=>`<option ${row.unit===u?"selected":""}>${u}</option>`).join("")}</select>
-        <div id="ent-unit-warn-${i}" style="display:none;font-size:10px;color:var(--amber);margin-top:2px">⚠️ Einheit prüfen!</div>
-      </div>
-      ${_entRows.length>1?`<button style="border:none;background:var(--redlo);color:var(--red);border-radius:6px;cursor:pointer;font-size:14px;height:36px;align-self:end" onclick="removeEntRow(${i})">✕</button>`:"<div></div>"}
-    </div>`;
-  });
-
-  openModal(`
-    <div style="font-size:16px;font-weight:700;margin-bottom:12px">📤 Entnahme</div>
-    <!-- Tab-Auswahl: Suchen oder Foto-Scan -->
-    <div style="display:flex;background:var(--faint);border-radius:8px;padding:3px;margin-bottom:12px;gap:2px">
-      <button class="btn" id="ent-tab-search" style="flex:1;font-size:12px;background:var(--accent);color:#fff" onclick="entSwitchTab('search')">🔍 Suchen</button>
-      <button class="btn" id="ent-tab-cam" style="flex:1;font-size:12px;background:transparent;color:var(--muted)" onclick="entSwitchTab('cam')">📷 Foto scannen</button>
-    </div>
-    <!-- Suchbereich -->
-    <div id="ent-search-section">
-      <div class="fw"><label class="lbl">Medikament suchen</label><input id="ent-search" placeholder="Name eingeben..." oninput="filterEntList(this.value)"/></div>
-      <div id="ent-list" style="max-height:180px;overflow-y:auto;border-radius:8px;border:1px solid var(--border);margin-bottom:14px">${medList||"<div style='padding:14px;text-align:center;font-size:12px;color:var(--muted)'>Keine Medikamente</div>"}</div>
-    </div>
-    <!-- Kamera-Scan-Bereich (startet NICHT automatisch) -->
-    <div id="ent-cam-section" style="display:none">
-      <div id="ent-cam-view" style="position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;margin-bottom:10px;min-height:140px">
-        <video id="ent-cam-video" style="width:100%;height:100%;object-fit:cover;display:none" playsinline muted></video>
-        <div id="ent-cam-ph" style="text-align:center;color:#94A3B8;padding:20px"><div style="font-size:36px;margin-bottom:8px">📷</div><div style="font-size:13px">Kamera starten → Foto aufnehmen</div></div>
-      </div>
-      <div id="ent-cam-err" style="display:none;font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:8px"></div>
-      <div style="display:flex;gap:8px;margin-bottom:10px">
-        <button class="btn btn-primary" id="ent-cam-btn" style="flex:2" onclick="entCamAction()">📷 Kamera starten</button>
-      </div>
-      <div id="ent-ai-status" style="display:none;font-size:12px;color:var(--accent);padding:8px 12px;background:var(--acclo);border-radius:8px;margin-bottom:8px"><span class="spin">⟳</span> KI erkennt Medikament...</div>
-    </div>
-    <!-- Entnahme-Detail-Bereich (erscheint nach Medikamenten-Auswahl) -->
-    <div id="ent-detail" style="${_entMed?"":"display:none"}">
-      <div style="background:var(--acclo);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:14px;margin-bottom:14px">
-        <div style="font-weight:600;font-size:13px;margin-bottom:2px">${_entMed?h(_entMed.name):""}</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${_entMed?"Bestand: "+_entMed.count+" "+_entMed.unit+(_entMed.totalPills?" · "+_entMed.totalPills+" "+(_entMed.pillUnit||"Tablette"):""):""}</div>
-        <div id="ent-rows">${rowsHtml}</div>
-        ${_entRows.length<3?`<button class="btn btn-sm" style="border:1px dashed var(--border);font-size:11px;margin-bottom:8px" onclick="addEntRow()">+ Zeile hinzufügen</button>`:""}
-        <div style="font-size:12px;color:var(--muted);padding-top:8px;border-top:1px solid var(--border)">Verbleibend: <b id="ent-remain" style="color:var(--text)"></b></div>
-      </div>
-    </div>
-    <div style="display:flex;gap:10px">
-      <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-      <button class="btn btn-amber" id="ent-book-btn" style="flex:2;opacity:${_entMed?1:.5}" onclick="bookEntnahme()" ${!_entMed?"disabled":""}>📤 Entnahme buchen</button>
-    </div>`,"",true);
-  updateEntPreview();
-  // Einheiten-Kompatibilität für alle Zeilen direkt nach Render prüfen
-  setTimeout(()=>{_entRows.forEach((_,i)=>checkEntUnit(i));},50);
-}
-
-// Medikamenten-Liste filtern nach Suchbegriff
-function filterEntList(q){
-  const items=meds.filter(m=>!q||m.name.toLowerCase().includes(q.toLowerCase()));
-  document.getElementById("ent-list").innerHTML=items.map((m,i)=>{
-    const g=groups.find(x=>x.id===m.groupId);const sel=_entMed?.id===m.id;
-    const stockInfo=m.totalPills?`${m.count} ${m.unit} · ${m.totalPills} ${m.pillUnit||"Tablette"}`:`${m.count} ${m.unit}`;
-    return`<div onclick="selectEntMed('${m.id}')" style="padding:10px 13px;border-bottom:${i<items.length-1?"1px solid var(--border)":"none"};cursor:pointer;background:${sel?"var(--acclo)":"transparent"};display:flex;align-items:center;gap:10px">
-      <span style="font-size:18px">${g?.emoji||"💊"}</span>
-      <div style="flex:1"><div style="font-weight:600;font-size:13px">${h(m.name)}</div><div style="font-size:11px;color:var(--muted)">${stockInfo}</div></div>
-      ${sel?`<span style="color:var(--accent);font-weight:700">✓</span>`:""}
-    </div>`;
-  }).join("")||"<div style='padding:14px;text-align:center;font-size:12px;color:var(--muted)'>Nichts gefunden</div>";
-}
-
-// Dynamische Entnahme-Einheiten aus dem Medikament ableiten
-function getEntUnitsFor(med){
-  if(!med)return ENT_UNITS;
-  const result=[];
-  // 1. Stückeinheit zuerst (höchste Priorität)
-  if(med.pillUnit&&!result.includes(med.pillUnit))result.push(med.pillUnit);
-  // 2. Blister NUR wenn echte Blister-Struktur:
-  //    - med.unit=Blister (Grundeinheit ist Blister), ODER
-  //    - blisterCount>1 (mehrere Blister pro Packung), ODER
-  //    - Cache hat Eintrag (Nutzer hat Blistergröße eingetragen)
-  const hasBlisterStructure=(med.unit==="Blister")||(med.blisterCount&&med.blisterCount>1)||!!getBlisterPPB(med);
-  if(hasBlisterStructure&&!result.includes("Blister"))result.push("Blister");
-  // 3. Packungseinheit
-  if(med.unit&&!result.includes(med.unit))result.push(med.unit);
-  // 4. Kompatible Alternativen aus ENT_UNITS
-  const medGrp=getUnitGroup(med.pillUnit||"");
-  ENT_UNITS.forEach(u=>{
-    if(!result.includes(u)){
-      const uGrp=getUnitGroup(u);
-      // Nur gleiche Gruppe oder Blister↔Oral
-      if(!uGrp||!medGrp||uGrp===medGrp||(uGrp==="oral"&&medGrp==="oral"))result.push(u);
-    }
-  });
-  // Mindestens die Packungseinheit immer verfügbar
-  if(!result.includes("Packung"))result.push("Packung");
-  return result;
-}
-
-// Medikament auswählen – pillUnit als Standard-Einheit
-function selectEntMed(id){
-  _entMed=meds.find(m=>m.id===id);
-  const unit=_entMed?.pillUnit||(_entMed?.unit==="Blister"?"Tablette":_entMed?.unit==="Packung"?"Tablette":"Tablette");
-  _entRows=[{qty:1,unit}];
-  renderEntModal();
-  const inp=document.getElementById("ent-search");if(inp)inp.focus();
-}
-
-function addEntRow(){_entRows.push({qty:1,unit:_entMed?.pillUnit||"Tablette"});renderEntModal();}
-function removeEntRow(i){_entRows=_entRows.filter((_,j)=>j!==i);renderEntModal();}
-
-// Vorschau: Verbleibenden Bestand nach Entnahme berechnen
-function updateEntPreview(){
-  if(!_entMed)return;
-  const ppbCached=getBlisterPPB(_entMed);
-  // ppp = Tabletten pro PACKUNG. ppbCached = Tabletten pro BLISTER. Nie verwechseln!
-  const ppp=_entMed.totalPills&&_entMed.count>0?Math.round(_entMed.totalPills/_entMed.count):null;
-  const el=document.getElementById("ent-remain");if(!el)return;
-  // Blister-Zeile ohne bekannte Menge → Warnung, keine Berechnung
-  const hasBlister=_entRows.some(r=>r.unit.toLowerCase()==="blister");
-  if(hasBlister&&!ppbCached){
-    el.textContent="⚠️ Blistermenge eintragen – Buchen gesperrt";
-    el.style.color="var(--amber)";return;
-  }
-  let packDelta=0,pillDelta=0;
-  _entRows.forEach(r=>{
-    const u=r.unit.toLowerCase();const mu=_entMed.unit.toLowerCase();
-    if(u===mu){packDelta+=r.qty;}
-    else if(u==="blister"){
-      // Sanity-Check: pib darf nicht > totalPills des Medikaments sein
-      const rawPib=ppbCached||1;
-      const ppp2=_entMed.totalPills&&_entMed.count>0?Math.round(_entMed.totalPills/_entMed.count):0;
-      // Nur korrigieren wenn pib größer als eine ganze Packung (nicht nur Gesamtbestand)
-      const pib=ppp2>0&&rawPib>ppp2*1.1?1:rawPib;
-      pillDelta+=r.qty*pib;
-      if(ppp&&ppp>1)packDelta+=r.qty*pib/ppp;else packDelta+=r.qty;
-    }else if(["tablette","kapsel","tropfen","ml","ampulle"].includes(u)){
-      pillDelta+=r.qty;
-      if(ppp&&ppp>1)packDelta+=r.qty/ppp;
-    }else{packDelta+=r.qty;}
-  });
-  const newPills=_entMed.totalPills!=null?Math.max(0,_entMed.totalPills-pillDelta):null;
-  const newPacks=newPills!=null&&ppp&&ppp>1?Math.max(0,Math.ceil(newPills/ppp)):Math.max(0,Math.round(_entMed.count-packDelta));
-  el.textContent=(newPills!=null?newPills+" "+(_entMed.pillUnit||"Tablette")+" ("+newPacks+" "+_entMed.unit+")":newPacks+" "+_entMed.unit)+(newPacks===0?" – Nachkaufen!":"");
-  el.style.color=newPacks===0?"var(--red)":"var(--text)";
-}
-
-// Tab-Wechsel: Suche oder Kamera
-function entSwitchTab(tab){
-  const ss=document.getElementById("ent-search-section");const cs=document.getElementById("ent-cam-section");
-  const tb1=document.getElementById("ent-tab-search");const tb2=document.getElementById("ent-tab-cam");
-  if(tab==="search"){
-    if(ss)ss.style.display="block";if(cs)cs.style.display="none";
-    if(tb1){tb1.style.background="var(--accent)";tb1.style.color="#fff";}
-    if(tb2){tb2.style.background="transparent";tb2.style.color="var(--muted)";}
-    stopEntCam();
-  }else{
-    if(ss)ss.style.display="none";if(cs)cs.style.display="block";
-    if(tb2){tb2.style.background="var(--accent)";tb2.style.color="#fff";}
-    if(tb1){tb1.style.background="transparent";tb1.style.color="var(--muted)";}
-    // Kamera startet automatisch beim Tab-Klick
-    setTimeout(()=>{if(!_entCamStream)entCamAction();},150);
-  }
-}
-
-// Kamera-Aktionen für Entnahme-Scan
-let _entCamStream=null;
-function entCamAction(){
-  const video=document.getElementById("ent-cam-video");const btn=document.getElementById("ent-cam-btn");
-  if(_entCamStream){
-    // Kamera läuft → Foto aufnehmen und analysieren
-    const canvas=document.createElement("canvas");canvas.width=video.videoWidth;canvas.height=video.videoHeight;
-    canvas.getContext("2d").drawImage(video,0,0);
-    stopEntCam();analyseEntPhoto(canvas.toDataURL("image/jpeg",.85));return;
-  }
-  // Kamera noch nicht gestartet → starten
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280}}}).then(stream=>{
-    _entCamStream=stream;if(video){video.srcObject=stream;video.style.display="block";video.play();}
-    const ph=document.getElementById("ent-cam-ph");if(ph)ph.style.display="none";
-    const err=document.getElementById("ent-cam-err");if(err)err.style.display="none";
-    if(btn){btn.textContent="📸 Foto aufnehmen";btn.style.background="var(--green)";}
-  }).catch(()=>{
-    const err=document.getElementById("ent-cam-err");
-    if(err){err.style.display="block";err.style.background="var(--redlo)";err.style.color="var(--red)";err.textContent="Kamera nicht verfügbar";}
-    if(btn){btn.textContent="📷 Kamera starten";btn.style.background="var(--accent)";}
-  });
-}
-function stopEntCam(){if(_entCamStream){_entCamStream.getTracks().forEach(t=>t.stop());_entCamStream=null;}const v=document.getElementById("ent-cam-video");if(v)v.style.display="none";}
-
-// Foto analysieren und passendes Medikament im Bestand finden
-async function analyseEntPhoto(raw){
-  const st=document.getElementById("ent-ai-status");if(st)st.style.display="block";
-  const photo=await new Promise(res=>{const img=new Image();img.onload=()=>{const s=Math.min(1,600/img.width);const c=document.createElement("canvas");c.width=img.width*s;c.height=img.height*s;c.getContext("2d").drawImage(img,0,0,c.width,c.height);res(c.toDataURL("image/jpeg",.7));};img.src=raw;});
-  try{
-    const medNames=meds.map(m=>m.name).join(", ");
-    const r=await callAI([{role:"user",content:[
-      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:photo.split(",")[1]}},
-      {type:"text",text:`Erkenne das Medikament (beliebige Ausrichtung). Vorhandene Medikamente: ${medNames}. NUR JSON: {"name":"Name","found":true}. Falls unklar: {"found":false}`}
-    ]}],100);
-    const p=JSON.parse(r.match(/\{[\s\S]*\}/)[0]);
-    if(st)st.style.display="none";
-    if(p.found){
-      const found=meds.find(m=>m.name.toLowerCase()===p.name.toLowerCase()||m.name.toLowerCase().includes(p.name.toLowerCase().split(" ")[0]));
-      if(found){selectEntMed(found.id);entSwitchTab("search");toast(`✓ ${found.name} erkannt`,"info");}
-      else{toast(`${p.name} – nicht im Bestand`,"warn");entSwitchTab("search");}
-    }else{toast("Nicht erkannt – bitte manuell suchen","warn");entSwitchTab("search");}
-  }catch(e){if(st)st.style.display="none";handleAIErr(e);entSwitchTab("search");}
-}
-
-// Warnung wenn Entnahme-Einheit nicht zum Medikament passt
-// Inkompatibilitäts-Gruppen: Einheiten die NICHT zusammenpassen
-const UNIT_GROUPS={
-  oral:["tablette","kapsel","dragee","blister","lutschpastille"],
-  fluessig:["ml","tropfen","spray","lösung","suspension","flasche","saft"],
-  injizierbar:["ampulle","injektionslösung"],
-  topisch:["salbe","creme","gel","pflaster","tube"],
-  inhalativ:["inhalation","pulver"],
-  pakung:["packung"]
-};
-function getUnitGroup(u){
-  const ul=u.toLowerCase();
-  for(const[grp,units]of Object.entries(UNIT_GROUPS)){if(units.some(x=>ul.includes(x)))return grp;}
-  return null;
-}
-
-function checkEntUnit(rowIdx){
-  if(!_entMed)return;const row=_entRows[rowIdx];if(!row)return;
-  const u=row.unit.toLowerCase();
-  const pu=(_entMed.pillUnit||"tablette").toLowerCase();
-  const uGrp=getUnitGroup(u);const puGrp=getUnitGroup(pu);
-  // Kompatibel wenn: gleiche Gruppe, oder Blister↔Tablette/Kapsel, oder unbekannte Gruppe
-  const blisterOk=(u==="blister"&&["tablette","kapsel","dragee"].some(x=>pu.includes(x)))||
-                  (pu==="blister"&&["tablette","kapsel","dragee"].some(x=>u.includes(x)));
-  const incompat=uGrp&&puGrp&&uGrp!==puGrp&&uGrp!=="pakung"&&puGrp!=="pakung"&&!blisterOk;
-  const el=document.getElementById("ent-unit-warn-"+rowIdx);
-  const bookBtn=document.getElementById("ent-book-btn");
-  if(incompat){
-    if(el){el.style.display="block";el.style.color="var(--red)";el.textContent=`🚫 ${_entMed.name} enthält ${_entMed.pillUnit||"Tabletten"} – „${row.unit}" ist inkompatibel!`;}
-    if(bookBtn){bookBtn.disabled=true;bookBtn.style.opacity=".4";}
-    toast(`🚫 ${_entMed.pillUnit||"Tablette"} ≠ ${row.unit} – Einheit ändern!`,"warn");
-  }else{
-    if(el){el.style.display="none";}
-    if(u==="blister"){
-      const ppbConfirmed=getCachedBlisterPPB(_entMed); // Nur user-bestätigter Wert
-      const ppbSuggested=getBlisterPPB(_entMed);       // Auch AI-Wert (für Anzeige)
-      const pillsPerPack2=_entMed.totalPills&&_entMed.count>0?Math.round(_entMed.totalPills/_entMed.count):0;
-      const ppbUnrealistic=ppbSuggested&&pillsPerPack2>0&&ppbSuggested>=pillsPerPack2;
-      if(ppbConfirmed&&ppbConfirmed>0&&!ppbUnrealistic){
-        // User hat Blistermenge bereits bestätigt → anzeigen
-        if(el){el.style.display="block";el.style.color="var(--accent)";el.textContent=`ℹ️ 1 Blister = ${ppbConfirmed} ${_entMed.pillUnit||"Tabletten"}`;}
-        if(bookBtn){bookBtn.disabled=false;bookBtn.style.opacity="1";}
-      }else{
-        // Noch nicht vom User bestätigt → Dialog erzwingen
-        const hint=ppbUnrealistic?`⚠️ Blistermenge (${ppbSuggested}) unrealistisch – bitte korrigieren`:`⚠️ Blistermenge noch nicht bestätigt – bitte eintragen`;
-        if(el){el.style.display="block";el.style.color="var(--amber)";el.textContent=hint;}
-        if(bookBtn){bookBtn.disabled=true;bookBtn.style.opacity=".4";}
-        setTimeout(()=>openBlisterAmountDialog(rowIdx),200);
-      }
-    }else{
-      if(bookBtn){bookBtn.disabled=false;bookBtn.style.opacity="1";}
-    }
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// BLISTER-MENGE DIALOG: Einmalig eintragen, dann immer bekannt
-// Wie PZN-Cache – pro Medikament gespeichert
-// ══════════════════════════════════════════════════════════════════
-function openBlisterAmountDialog(rowIdx){
-  if(!_entMed)return;
-  const known=getBlisterPPB(_entMed);
-  const unit=_entMed.pillUnit||"Tabletten";
-  openSubModal(`
-    <div style="font-size:15px;font-weight:700;margin-bottom:6px">📦 Blistermenge eintragen</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">
-      Wie viele <b>${h(unit)}</b> enthält 1 Blister von<br>
-      <b>${h(_entMed.name)}</b>?<br>
-      <span style="font-size:11px;color:var(--accent)">Wird gespeichert – kein erneutes Eintragen nötig.</span>
-    </div>
-    <input id="blister-amt-inp" type="number" min="1" max="500" placeholder="z.B. 10"
-      value="${known||''}"
-      style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;
-             background:var(--card2);color:var(--text);font-size:16px;box-sizing:border-box;margin-bottom:14px"/>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-full" onclick="closeSubModal()">Abbrechen</button>
-      <button class="btn btn-primary btn-full" onclick="saveBlisterAmt(${rowIdx})">✅ Speichern</button>
-    </div>
-  `);
-  setTimeout(()=>{const inp=document.getElementById("blister-amt-inp");if(inp){inp.focus();inp.select();}},80);
-}
-
-function saveBlisterAmt(rowIdx){
-  const inp=document.getElementById("blister-amt-inp");
-  if(!inp||!_entMed)return;
-  const val=parseInt(inp.value);
-  if(!val||val<1){toast("Bitte eine gültige Menge eingeben","warn");return;}
-  setBlisterPPB(_entMed.id,val);
-  _entMed={..._entMed,pillsPerBlister:val};
-  closeSubModal();
-  toast(`✅ 1 Blister = ${val} ${_entMed.pillUnit||"Tabletten"} gespeichert`,"ok");
-  // Jetzt Entnahme-Button freischalten und Info aktualisieren
-  const el=document.getElementById("ent-unit-warn-"+rowIdx);
-  if(el){el.style.display="block";el.style.color="var(--accent)";el.textContent=`ℹ️ 1 Blister = ${val} ${_entMed.pillUnit||"Tabletten"}`;}
-  const bookBtn=document.getElementById("ent-book-btn");
-  if(bookBtn){bookBtn.disabled=false;bookBtn.style.opacity="1";}
-  // Preview aktualisieren
-  updateEntPreview();
-}
-
-// ══════════════════════════════════════════════════════════════════
-// ENTNAHME BUCHEN: Bestand korrekt reduzieren
-// Einzelne Tabletten/Ampullen werden korrekt gezählt
-// ══════════════════════════════════════════════════════════════════
-function bookEntnahme(){
-  if(!_entMed)return;
-  const med=meds.find(m=>m.id===_entMed.id);if(!med)return;
-  // Guard: Blister ohne Menge ODER unrealistische Menge (> Gesamtbestand) → Dialog
-  const blisterRowIdx=_entRows.findIndex(r=>r.unit.toLowerCase()==="blister");
-  if(blisterRowIdx>=0){
-    const pibChk=getCachedBlisterPPB(med); // Nur user-bestätigt – AI-Wert zählt nicht
-    // Ungültig nur wenn pib > Tabletten pro PACKUNG (nicht pro Gesamtbestand)
-    // Letzter Blister entnehmen darf 0 ergeben – das ist korrekt!
-    const pillsPerPack=med.totalPills&&med.count>0?Math.round(med.totalPills/med.count):0;
-    const pibFull=getBlisterPPB(med); // Für Plausibilitätsprüfung inkl. AI-Wert
-    // Bad: pib >= pillsPerPack bedeutet 1 Blister = ganze Packung → verdächtig → Dialog
-    const pibBad=pibFull&&pillsPerPack>0&&pibFull>=pillsPerPack;
-    if(!pibChk||pibBad){
-      if(pibBad){
-        meds=meds.map(m=>m.id===med.id?{...m,pillsPerBlister:null}:m);
-        const bc=getBlisterCache();delete bc[med.id];LS.set('sdro_blister_cache',bc);
-        save();
-      }
-      openBlisterAmountDialog(blisterRowIdx);return;
-    }
-  }
-  const summary=_entRows.map(r=>r.qty+" "+r.unit).join(" + ");
-  // Stückzahl pro Packung ermitteln
-  // ppp = Stück pro Zähleinheit (z.B. 30 Tabletten pro Packung, nicht pro Blister)
-  // ppp = Tabletten pro PACKUNG, niemals pillsPerBlister (=Tabletten pro Blister, anderes Konzept!)
-  const ppp=med.totalPills&&med.count>0?Math.round(med.totalPills/med.count):null;
-  let packDelta=0,pillDelta=0;
-  _entRows.forEach(r=>{
-    const u=r.unit.toLowerCase();const mu=med.unit.toLowerCase();
-    const isSmall=["tablette","kapsel","tropfen","ml","ampulle"].includes(u);
-    const isBlisterUnit=(u==="blister");
-    const medIsBlister=(mu==="blister");
-    if(isBlisterUnit){
-      // Blister-Entnahme: immer über Blister-Cache rechnen – NIE ppp (Gesamt)
-      const pib=getBlisterPPB(med)||(medIsBlister&&ppp?ppp:1);
-      pillDelta+=r.qty*pib;
-      if(medIsBlister){packDelta+=r.qty;} // Einheit ist Blister → 1:1
-      else if(ppp&&ppp>0)packDelta+=r.qty*pib/ppp; // anteilig von Packung
-    }else if(isSmall){
-      // Einzelne Tablette/Kapsel → nur Stückzahl reduzieren
-      pillDelta+=r.qty;
-      if(ppp&&ppp>1)packDelta+=r.qty/ppp;
-    }else if(u===mu){
-      // Gleiche Verpackungseinheit wie Bestand (Packung, Spray, Flasche …)
-      packDelta+=r.qty;
-      if(ppp&&!medIsBlister)pillDelta+=r.qty*ppp;
-    }else{
-      // Andere Verpackungseinheit → Packungen direkt abziehen
-      packDelta+=r.qty;
-    }
-  });
-  // Neuen Bestand berechnen
-  const newTotalPills=med.totalPills!=null?Math.max(0,med.totalPills-pillDelta):null;
-  let newCount;
-  if(newTotalPills!=null&&ppp&&ppp>1){
-    // Packungen aus Stückzahl ableiten
-    newCount=Math.max(0,Math.ceil(newTotalPills/ppp));
-  }else{
-    newCount=Math.max(0,Math.round(med.count-packDelta));
-  }
-  meds=meds.map(m=>m.id===med.id?{...m,count:newCount,totalPills:newTotalPills,lowStock:newTotalPills!=null?(newTotalPills<=5&&newCount<=1):(newCount===1&&newCount>0)}:m);
-  // Bestandsführungs-Log: Entnahme-Zusammenfassung
-  const logSummary=_entRows.map(r=>r.qty+" "+r.unit).join(", ");
-  addLogEntry("remove",{...med,count:newCount,totalPills:newTotalPills},logSummary,null);
-  save();
-  // Wenn Bestand auf 0: Nachfragen ob löschen oder behalten
-  if(newCount===0&&(newTotalPills===null||newTotalPills===0)){
-    closeModal();renderList();
-    const medName=med.name;const medId=med.id;
-    const isFavorit=isFav(medId);
-    if(isFavorit){
-      // Favoriten: automatisch behalten mit "LEER"-Hinweis, nur kurz informieren
-      toast(`⭐ ${medName} ist aufgebraucht – bleibt als Favorit mit „LEER"-Status`,"warn");
-    }else{
-      // Nicht-Favoriten: Dialog fragen
-      openModal(`<div style="text-align:center;margin-bottom:14px">
-        <div style="font-size:36px;margin-bottom:8px">📭</div>
-        <div style="font-size:15px;font-weight:700;margin-bottom:6px">${h(medName)} aufgebraucht</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:18px">Bestand ist jetzt 0. Was möchtest du tun?</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button class="btn btn-danger btn-full" onclick="removeMedAfterEmpty('${medId}')">🗑️ Aus Liste entfernen</button>
-          <button class="btn btn-full" style="background:var(--card2);color:var(--text);border:1px solid var(--border)" onclick="closeModal();renderList()">📋 Behalten (Bestand = 0)</button>
-        </div>
-      </div>`,"center-overlay",true);
-    }
-  }else{
-    closeModal();renderList();
-    const rem=newTotalPills!=null?" (noch "+newTotalPills+" "+(med.pillUnit||"Tablette")+")":"";
-    toast(med.name+": "+summary+" entnommen → "+newCount+" "+med.unit+rem,"ok");
-  }
-}
-
-// Favorit setzen und Modal schließen (bei leeren Meds)
-function toggleFavAndKeep(medId){
-  if(!isFav(medId)){favs=[...favs,medId];LS.set("sdro_favs",favs);}
-  closeModal();renderList();
-  toast("⭐ Als Favorit gespeichert – erscheint mit LEER-Status","ok");
-}
-
-// Medikament nach vollständiger Entnahme aus Liste entfernen
-function removeMedAfterEmpty(medId){
-  const med=meds.find(m=>m.id===medId);
-  const name=med?.name||"";
-  meds=meds.filter(m=>m.id!==medId);
-  favs=favs.filter(id=>id!==medId);
-  LS.set("sdro_favs",favs);
-  save();closeModal();renderList();
-  toast(name+" aus Liste entfernt","warn");
-}
-// ══════════════════════════════════════════════════════════════════
-// FAVORITEN: Schnellzugriff auf bevorzugte Medikamente
-// ══════════════════════════════════════════════════════════════════
-function showFavs(){
-  _renderFavsModal('');
-}
-function _renderFavsModal(q){
-  const query=(q||"").toLowerCase().trim();
-  const favMeds=meds.filter(m=>isFav(m.id));
-  // Alle Meds die zur Suche passen (für "hinzufügen zu Favoriten")
-  const searchMeds=query.length>=2?meds.filter(m=>
-    m.name.toLowerCase().includes(query)||
-    (m.purpose||"").toLowerCase().includes(query)||
-    (m.manufacturer||"").toLowerCase().includes(query)
-  ):[];
-  let html=`<div style="font-size:16px;font-weight:700;margin-bottom:10px">⭐ Favoriten</div>`;
-  // Suchfeld
-  html+=`<div style="position:relative;margin-bottom:12px">
-    <input id="fav-search-inp" type="text" placeholder="Medikament suchen & als Favorit setzen…"
-      value="${h(q)}" oninput="_renderFavsModal(this.value)"
-      style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card2);color:var(--text);font-size:13px;box-sizing:border-box"/>
-  </div>`;
-  // Suchergebnisse: Nicht-Favoriten die auf Suche passen
-  if(query.length>=2){
-    const nonFavResults=searchMeds.filter(m=>!isFav(m.id));
-    if(nonFavResults.length){
-      html+=`<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Suchergebnisse – als Favorit hinzufügen</div>`;
-      nonFavResults.slice(0,5).forEach(m=>{
-        const g=groups.find(x=>x.id===m.groupId);
-        html+=`<div class="card" style="padding:8px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:20px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:20px;flex-shrink:0">💊</span>'}
-          <div style="flex:1;min-width:0;font-size:13px;font-weight:600">${h(m.name)}</div>
-          <button class="btn btn-sm btn-primary" onclick="toggleFav('${m.id}');_renderFavsModal('${h(q)}')">⭐ Favorit</button>
-        </div>`;
-      });
-      html+=`<div style="margin-bottom:10px"></div>`;
-    }
-  }
-  // Aktuelle Favoriten
-  if(!favMeds.length&&query.length<2){
-    html+=`<div style="text-align:center;padding:32px 20px;color:var(--muted)"><div style="font-size:36px;margin-bottom:10px">☆</div><div style="font-size:13px;font-weight:600;margin-bottom:6px">Noch keine Favoriten</div><div style="font-size:11px">Bearbeite ein Medikament und tippe auf ⭐</div></div>`;
-  }else if(favMeds.length){
-    const filtered=query.length>=2?favMeds.filter(m=>m.name.toLowerCase().includes(query)||(m.purpose||"").toLowerCase().includes(query)):favMeds;
-    if(filtered.length){
-      html+=`<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Meine Favoriten (${filtered.length})</div>`;
-      filtered.forEach(m=>{
-        const g=groups.find(x=>x.id===m.groupId);
-        const isEmpty=(m.count===0&&(m.totalPills===null||m.totalPills===0));
-        html+=`<div class="card" style="padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(m.name)}${m.strength?" · "+h(m.strength):""}</div>
-            ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':'<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>'}
-          </div>
-          <div style="display:flex;gap:5px;flex-shrink:0">
-            <button class="btn btn-sm" onclick="closeModal();editMed('${m.id}')">✏️</button>
-            ${!isEmpty?`<button class="btn btn-sm" style="background:var(--amberlo);color:var(--amber)" onclick="closeModal();openEntModalFor('${m.id}')">📤</button>`:''}
-            <button style="border:none;background:none;cursor:pointer;padding:3px;font-size:16px" onclick="toggleFav('${m.id}');_renderFavsModal('${h(q)}')" title="Aus Favoriten entfernen">✕</button>
-          </div>
-        </div>`;
-      });
-    }
-  }
-  const ov=document.getElementById("modal-ov");
-  if(ov&&ov.style.display==="flex"){
-    const sheet=ov.querySelector(".sheet");
-    if(sheet){const x=sheet.querySelector("[data-xbtn]");const content=sheet.children;
-      sheet.innerHTML=_xBtn()+'<div id="fav-modal-body"></div>';
-      document.getElementById("fav-modal-body").innerHTML=html;
-      const inp=document.getElementById("fav-search-inp");if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}
-      return;
-    }
-  }
-  openModal('<div id="fav-modal-body">'+html+'</div>','',true);
-  setTimeout(()=>{const inp=document.getElementById("fav-search-inp");if(inp)inp.focus();},80);
-}
-function openEntModalFor(id){
-  _entMed=meds.find(m=>m.id===id);
-  if(_entMed){
-    const unit=_entMed.pillUnit||(_entMed.unit==="Blister"?"Tablette":"Tablette");
-    _entRows=[{qty:1,unit}];
-  }
-  renderEntModal();
-}
-
-// ══════════════════════════════════════════════════════════════════
-// GRUPPEN-LÖSCHUNG: Mit Sicherheitsprüfung und Umleitungs-Dialog
-// ══════════════════════════════════════════════════════════════════
-function deleteGroup(id){
-  const g=groups.find(x=>x.id===id);if(!g)return;
-  const cnt=meds.filter(m=>m.groupId===id).length;
-  if(cnt>0){
-    // Gruppe hat Medikamente → erst verschieben anbieten
-    const otherGroups=groups.filter(g2=>g2.id!==id);
-    const opts=otherGroups.map(g2=>`<option value="${g2.id}">${h(g2.emoji)} ${h(g2.name)}</option>`).join("");
-    openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:10px">🗑️ Gruppe löschen</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">„<b style="color:var(--text)">${h(g.name)}</b>" hat noch <b>${cnt} Medikamente</b>.<br>Wohin sollen diese verschoben werden?</div>
-      <div class="fw"><label class="lbl">Medikamente verschieben nach</label><select id="move-grp-sel">${opts}</select></div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-        <button class="btn btn-danger" style="flex:2" onclick="moveAndDeleteGroup('${id}')">Verschieben & Löschen</button>
-      </div>`,"center-overlay");
-  }else{
-    openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:10px;text-align:center">🗑️ Gruppe löschen?</div>
-      <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px">„<b style="color:var(--text)">${h(g.name)}</b>" ist leer.</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-        <button class="btn btn-danger" style="flex:2" onclick="doDeleteGroup('${id}')">Ja, löschen</button>
-      </div>`,"center-overlay");
-  }
-}
-
-// Medikamente verschieben und dann Gruppe löschen
-function moveAndDeleteGroup(id){
-  const targetId=document.getElementById("move-grp-sel")?.value;
-  if(!targetId){toast("Bitte Zielgruppe wählen","warn");return;}
-  meds=meds.map(m=>m.groupId===id?{...m,groupId:targetId}:m);
-  doDeleteGroup(id);
-}
-function doDeleteGroup(id){
-  const g=groups.find(x=>x.id===id);
-  groups=groups.filter(x=>x.id!==id);
-  save();closeAndRefresh();toast(`Gruppe „${g?.name}" gelöscht`,"warn");
-}
-
-function showTokenInfo(){
-  openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:14px;padding-right:24px">💰 Token-Kosten Übersicht</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Preise: Haiku ~$1/M Tokens · Sonnet ~$15/M Output · Web Search ~$10/1000 Suchen</div>
-    <div style="display:flex;flex-direction:column;gap:4px">
-      ${[
-        ["📷 Foto analysieren (KI erkennt Med)","Sonnet + Bild","~$0.01–0.02","var(--amber)"],
-        ["🔍 PZN prüfen/suchen (lokal)","OTC-Bundle / DB","kostenlos","var(--green)"],
-        ["🔍 PZN prüfen/suchen (API Fallback)","Sonnet + Websuche","~$0.02–0.05","var(--amber)"],
-        ["📸 Online-Foto suchen","Sonnet + Websuche","~$0.01–0.03","var(--amber)"],
-        ["🔎 Symptomsuche","Haiku","~$0.001","var(--green)"],
-        ["✍️ Rechtschreibprüfung","Haiku","~$0.0005","var(--green)"],
-        ["📱 Entnahme-Scan (Kamera)","Sonnet + Bild","~$0.005","var(--amber)"],
-        ["🔑 API-Schlüssel testen","Haiku","~$0.00001","var(--green)"],
-      ].map(([fn,model,cost,col])=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--card2);border-radius:7px">
-        <div style="flex:1;font-size:11px;font-weight:500">${fn}</div>
-        <div style="font-size:9px;color:var(--muted);white-space:nowrap">${model}</div>
-        <div style="font-size:11px;font-weight:700;color:${col};white-space:nowrap;min-width:80px;text-align:right">${cost}</div>
-      </div>`).join("")}
-    </div>
-    <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.6;padding:8px 10px;background:var(--faint);border-radius:7px">
-      💡 Tipp: Jede PZN wird nach der ersten API-Prüfung 30 Tage gecacht → danach kostenlos.<br>
-      Foto-Analyse bei jedem neuen Medikament kostet 1–2 Cent.
-    </div>`,"center-overlay",true);
-}
-
-// PZN-Badge Legende anzeigen
-function showPZNLegend(){
-  openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:14px;padding-right:24px">🏷️ PZN-Badge Bedeutung</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      ${[
-        ["✓ PZN","var(--green)","var(--greenlo)","Geprüft – stimmt mit Datenbank überein"],
-        ["⚠ PZN","var(--red)","var(--redlo)","Unstimmigkeit – Klicken für Details"],
-        ["? PZN","var(--muted)","var(--faint)","Noch nicht geprüft – Klicken zum Prüfen"],
-        ["– PZN","var(--muted)","var(--faint)","Prüfung ignoriert – Klicken zum Reaktivieren"],
-        ["+ PZN suchen","var(--muted)","transparent","Keine PZN – Klicken für automatische Suche"],
-      ].map(([badge,col,bg,desc])=>`<div style="display:flex;align-items:flex-start;gap:12px;padding:8px 10px;background:var(--card2);border-radius:8px">
-        <span style="font-size:10px;font-family:monospace;color:${col};background:${bg};padding:2px 8px;border-radius:20px;border:1px solid ${col}44;white-space:nowrap;flex-shrink:0">${badge}</span>
-        <span style="font-size:12px;color:var(--muted);line-height:1.4">${desc}</span>
-      </div>`).join("")}
-    </div>
-    <div style="font-size:11px;color:var(--muted);margin-top:12px;padding:8px 10px;background:var(--faint);border-radius:7px">
-      💡 Auf jeden Badge klicken → Aktionsmenü (Prüfen · Foto suchen · Ignorierung aufheben)
-    </div>`,"center-overlay",true);
-}
-
-function openGroupsModal(){
-  let html=`<div style="font-size:15px;font-weight:700;margin-bottom:14px;padding-right:24px">🗂️ Gruppen verwalten</div>`;
-  if(!groups.length){
-    html+=`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Noch keine Gruppen</div>`;
-  }else{
-    groups.forEach(g=>{
-      const cnt=meds.filter(m=>m.groupId===g.id).length;
-      html+=`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
-        <div style="width:36px;height:36px;border-radius:50%;background:${g.color}25;border:2px solid ${g.color};display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">${h(g.emoji)}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">${h(g.name)}</div>
-          <div style="font-size:11px;color:var(--muted)">${cnt} Medikament${cnt!==1?"e":""}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn btn-sm" onclick="closeModal();openGrpModal(${JSON.stringify(g).replace(/"/g,'&quot;')},true)">✏️</button>
-          <button class="btn btn-sm" style="background:var(--redlo);color:var(--red)" onclick="closeModal();deleteGroup('${g.id}')">🗑️</button>
-        </div>
-      </div>`;
-    });
-  }
-  html+=`<button class="btn btn-primary btn-full" style="margin-top:14px" onclick="closeModal();openGrpModal()">+ Neue Gruppe erstellen</button>`;
-  openModal(html,"",true);
-}
-function deleteGroupFromStats(id,name,cnt){
-  if(cnt>0){
-    const otherGroups=groups.filter(g=>g.id!==id);
-    const opts=otherGroups.map(g=>`<option value="${g.id}">${h(g.emoji)} ${h(g.name)}</option>`).join("");
-    openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:10px">🗑️ Gruppe löschen</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">„<b style="color:var(--text)">${name}</b>" hat noch <b>${cnt} Medikamente</b>.</div>
-      <div class="fw"><label class="lbl">Verschieben nach</label><select id="move-grp-sel">${opts}</select></div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-        <button class="btn btn-danger" style="flex:2" onclick="moveAndDeleteGroup('${id}')">Verschieben & Löschen</button>
-      </div>`,"center-overlay");
-  }else{
-    openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:10px;text-align:center">🗑️ Gruppe löschen?</div>
-      <div style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:18px">„<b style="color:var(--text)">${name}</b>" ist leer.</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-        <button class="btn btn-danger" style="flex:2" onclick="doDeleteGroup('${id}')">Ja, löschen</button>
-      </div>`,"center-overlay");
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// ARCHIV: Alle jemals angelegten Medikamente einsehen und exportieren
-// ══════════════════════════════════════════════════════════════════
-function showArchive(){renderArchiveModal();}
-function renderArchiveModal(){
-  const archive=LS.get("sdro_archive")||[];
-  let html=`<div style="font-size:15px;font-weight:700;margin-bottom:4px">📋 Medikamenten-Archiv</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Alle jemals eingetragenen Medikamente (${archive.length})</div>`;
-  if(!archive.length){
-    html+=`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Noch keine archivierten Medikamente</div>`;
-  }else{
-    html+=`<div style="display:flex;gap:8px;margin-bottom:12px">
-      <button class="btn btn-ghost btn-sm" onclick="exportArchive()" style="font-size:11px">📥 Exportieren</button>
-      <button class="btn btn-sm" style="font-size:11px;background:var(--redlo);color:var(--red)" onclick="if(confirm('Gesamtes Archiv löschen?')){LS.set('sdro_archive',[]);renderArchiveModal();}">🗑️ Löschen</button>
-    </div><div style="max-height:60vh;overflow-y:auto">`;
-    archive.forEach((a,i)=>{
-      const g=groups.find(x=>x.id===a.groupId);
-      html+=`<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border)">
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">${h(a.name)}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:1px">${a.pzn?`PZN: ${h(a.pzn)} · `:""}${a.pillsPerBlister?`${a.pillsPerBlister} ${a.pillUnit||"Tablette"}/${a.unit||"Packung"} · `:""}${g?`${g.emoji} ${g.name}`:""}</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:1px">Hinzugefügt: ${a.addedOn||"–"} · Zuletzt: ${a.lastSeen||"–"}</div>
-        </div>
-        <button onclick="delArchiveEntry('${a.id}')" style="border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px;flex-shrink:0">🗑️</button>
-      </div>`;
-    });
-    html+=`</div>`;
-  }
-  openModal(html,"",true);
-}
-function delArchiveEntry(id){const a=(LS.get("sdro_archive")||[]).filter(x=>x.id!==id);LS.set("sdro_archive",a);renderArchiveModal();}
-function exportArchive(){
-  const archive=LS.get("sdro_archive")||[];if(!archive.length){toast("Archiv ist leer","warn");return;}
-  const hdr=["Name","PZN","Anwendung","Gruppe","Einheit","Stück pro Einheit","Stück-Einheit","Hinzugefügt","Zuletzt"];
-  const rows=archive.map(a=>{const g=groups.find(x=>x.id===a.groupId);return[a.name,a.pzn||"–",a.purpose||"–",g?.name||"–",a.unit||"–",a.pillsPerBlister||"–",a.pillUnit||"–",a.addedOn||"–",a.lastSeen||"–"];});
-  const csv="\uFEFF"+[hdr.join(";"),...rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,"'")}"`).join(";"))].join("\r\n");
-  const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);a.download=`SaDro_Archiv_${td()}.csv`;document.body.appendChild(a);a.click();a.remove();toast("✓ Archiv exportiert");
-}
-
-// ══════════════════════════════════════════════════════════════════
-// KI-DATENPRÜFUNG: Fehlende Informationen per KI ergänzen
-// Kann manuell oder automatisch im Hintergrund ausgeführt werden
-// ══════════════════════════════════════════════════════════════════
-let _bgCheckRunning=false;
-
-// BfArM-Text aus Zwischenablage importieren (kein CORS-Problem!)
-async function importPZNFromClipboard(){
-  openModal(`<div style="font-size:15px;font-weight:700;margin-bottom:8px;padding-right:24px">📋 BfArM-Liste einfügen</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">
-      Öffne <a href="https://www2.bfarm.de/PZN/PZN.txt" target="_blank" style="color:var(--accent)">www2.bfarm.de/PZN/PZN.txt</a> im Browser,
-      markiere alles (Strg+A) und kopiere (Strg+C). Dann hier einfügen:
-    </div>
-    <textarea id="pzn-paste-area" placeholder="Hier den kopierten Text einfügen (Strg+V)..." style="width:100%;height:120px;font-family:monospace;font-size:10px;resize:vertical;border:1.5px solid var(--border);border-radius:8px;padding:8px;background:var(--card2);color:var(--text);margin-bottom:10px"></textarea>
-    <div id="pzn-import-status" style="display:none;font-size:11px;margin-bottom:10px;padding:6px 10px;border-radius:6px"></div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-primary" style="flex:2" onclick="processPZNPaste()">✓ Importieren</button>
-      <button class="btn" style="flex:1" onclick="closeModal()">Abbrechen</button>
-    </div>`,"center-overlay",true);
-}
-
-async function processPZNPaste(){
-  const text=document.getElementById("pzn-paste-area")?.value||"";
-  const statusEl=document.getElementById("pzn-import-status");
-  if(!text.trim()){toast("Bitte erst Text einfügen","warn");return;}
-  if(statusEl){statusEl.style.display="block";statusEl.style.background="var(--acclo)";statusEl.style.color="var(--accent)";statusEl.textContent="Verarbeite...";}
-  const lines=text.split("\n");
-  const records=[];
-  for(let i=0;i<lines.length;i++){
-    const parts=lines[i].split(";");
-    if(parts.length>=4&&parts[0].trim().match(/^\d{5,8}$/)){
-      records.push({pzn:parts[0].trim().padStart(8,"0"),name:parts[3]?.trim()||"",form:parts[4]?.trim()||"",unit:parts[1]?.trim()||""});
-    }
-  }
-  if(!records.length){
-    if(statusEl){statusEl.style.background="var(--redlo)";statusEl.style.color="var(--red)";statusEl.textContent="⚠ Keine gültigen PZN-Daten gefunden. Bitte prüfe das Format.";}
-    return;
-  }
-  if(statusEl)statusEl.textContent=`Speichere ${records.length.toLocaleString("de-DE")} Einträge...`;
-  const ok=await storePZNRecords(records);
-  if(ok){
-    LS.set("sdro_pzn_dl",{date:td(),count:records.length});
-    if(statusEl){statusEl.style.background="var(--greenlo)";statusEl.style.color="var(--green)";statusEl.textContent=`✓ ${records.length.toLocaleString("de-DE")} PZNs importiert!`;}
-    toast("✓ "+records.length.toLocaleString("de-DE")+" PZNs importiert","ok");
-    setTimeout(()=>{closeModal();renderSettings();},1500);
-  }else{
-    if(statusEl){statusEl.style.background="var(--redlo)";statusEl.style.color="var(--red)";statusEl.textContent="Fehler beim Speichern (IndexedDB)";}
-  }
-}
-
-// KI-Datenprüfung: nutzt jetzt die vereinte checkMed Funktion
-async function runManualDataCheck(){
-  if(!apiKey||!apiKey.startsWith("sk-ant-")){toast("Bitte API-Schlüssel eingeben","warn");return;}
-  const incomplete=meds.filter(m=>!m.purpose||!m.pillUnit||!m.pzn);
-  if(!incomplete.length){toast("✓ Alle Medikamente vollständig","ok");return;}
-  toast("Prüfe "+incomplete.length+" Medikamente...","info");
-  for(const med of incomplete.slice(0,5)){
-    await checkMed(med.id,{silent:true,fetchImage:false});
-    await new Promise(r=>setTimeout(r,400));
-  }
-  if(currentView==="list")renderList();
-  toast("✓ Datenprüfung abgeschlossen","ok");
-}
-async function bgDataCheck(){/* Hintergrundprüfung - wird über setTimeout in runStartupCheck aufgerufen */}
-
-// ══════════════════════════════════════════════════════════════════
-// STARTUP-PRÜFUNG: Unvollständige Medikamente beim Start anzeigen
-// ══════════════════════════════════════════════════════════════════
-function runStartupCheck(){
-  const issues=[];
-  meds.forEach(m=>{
-    if(!m.expiryDate)issues.push({id:m.id,name:m.name,issue:"Kein MHD eingetragen"});
-    if(!m.groupId||!groups.find(g=>g.id===m.groupId))issues.push({id:m.id,name:m.name,issue:"Keine Gruppe zugewiesen"});
-    if(!m.purpose)issues.push({id:m.id,name:m.name,issue:"Kein Anwendungsgebiet"});
-  });
-  if(!issues.length){toast("✓ Alle Medikamente vollständig","ok");return;}
-  let html=`<div style="font-size:15px;font-weight:700;margin-bottom:12px">⚠️ Unvollständige Daten (${issues.length})</div>`;
-  issues.forEach(({name,issue,id})=>{
-    html+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--card2);border-radius:8px;margin-bottom:6px;gap:8px">
-      <div><div style="font-weight:600;font-size:13px">${h(name)}</div><div style="font-size:11px;color:var(--amber)">${h(issue)}</div></div>
-      <button class="btn btn-sm btn-ghost" onclick="closeModal();editMed('${id}')">Bearbeiten</button>
-    </div>`;
-  });
-  html+=`<button class="btn btn-full" style="margin-top:10px" onclick="closeModal()">Schließen</button>`;
-  openModal(html,"",true);
-}
-
-// ══════════════════════════════════════════════════════════════════
-// HINTERGRUND-DIENST: Alle 30 Sekunden Bestände prüfen und korrigieren
-// Läuft OHNE KI – rein arithmetische Berechnung
-// Prüft: totalPills → count-Konsistenz, fehlende Gesamtzahlen
-// ══════════════════════════════════════════════════════════════════
-setInterval(()=>{
-  let changed=false;
-  meds=meds.map(m=>{
-    const updated={...m};
-    // Falls Stückzahl pro Packung bekannt aber Gesamtzahl fehlt: berechnen
-    if(m.pillsPerBlister&&m.count>0&&(m.totalPills===null||m.totalPills===undefined)){
-      updated.totalPills=m.count*m.pillsPerBlister;changed=true;
-    }
-    // Falls count auf 0 aber totalPills noch positiv: korrigieren
-    if(m.count===0&&m.totalPills&&m.totalPills>0){
-      updated.totalPills=0;changed=true;
-    }
-    // HINWEIS: count-Konsistenz via pillsPerBlister absichtlich NICHT berechnet.
-    // pillsPerBlister = Tabletten pro BLISTER (nicht pro Packung).
-    return updated;
-  });
-  if(changed){save();if(currentView==="list")renderList();}
-},30000); // 30 Sekunden Intervall
-
-// ══════════════════════════════════════════════════════════════════
-// APP INITIALISIERUNG: Ansicht aufbauen und Startprüfung ausführen
-// ══════════════════════════════════════════════════════════════════
-
-// ── Startup-Cleanup: Leere Nicht-Favoriten aus der Liste entfernen ──
-// (Anforderung: leere Meds verschwinden, außer wenn favorisiert)
-(()=>{
-  const emptyNonFavs=meds.filter(m=>{
-    const isEmpty=m.count===0&&(m.totalPills===0||m.totalPills==null);
-    return isEmpty&&!isFav(m.id);
-  });
-  if(emptyNonFavs.length){
-    meds=meds.filter(m=>!emptyNonFavs.find(e=>e.id===m.id));
-    save();
-    console.log(`Startup-Cleanup: ${emptyNonFavs.length} leere Nicht-Favoriten entfernt:`,emptyNonFavs.map(m=>m.name));
-  }
-})();
-
-window._buildTime="SaDro-002 · 13.04.2026 11:39";
-renderList(); // Übersicht beim Start anzeigen
-updateUserIndicator(); // User-Anzeige initialisieren
-// 2 Sekunden nach Start: Unvollständige Daten prüfen
-setTimeout(()=>{
-  const issues=meds.filter(m=>!m.expiryDate||(!m.groupId||!groups.find(g=>g.id===m.groupId)));
-  if(issues.length>0)runStartupCheck();
-},2000);
-// 4 Sekunden nach Start: Fotos ohne Crop still zuschneiden (rückwirkend)
-setTimeout(async()=>{
-  // Startup-Crop deaktiviert: Auto-Crop ist abgeschaltet
-  // Fotos bleiben unverändert – KI analysiert immer das Originalbild
-},4000);
-// Monatliche BfArM-Aktualisierung im Hintergrund
-setTimeout(()=>checkMonthlyPZNRefresh(),8000);
-window.addEventListener("scroll",onBodyScroll);
-</script>
-</body>
-</html>
+        <button class="btn btn-ghost btn-sm" onclick="openGroupsModal()">Ver
