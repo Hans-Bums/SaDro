@@ -121,8 +121,8 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .fade{animation:fadeUp .18s ease;}
 /* ── Toast-Benachrichtigung ── */
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:9px 18px;border-radius:20px;font-size:12px;font-weight:600;z-index:999;box-shadow:var(--shadowmd);display:none;pointer-events:none;max-width:92vw;overflow:hidden;white-space:nowrap;}
-@keyframes sdro-ticker{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}}
-.toast-tick{display:inline-block;white-space:nowrap;padding-right:30px;}
+@keyframes sdro-ticker{0%{transform:translateX(110%)}100%{transform:translateX(-110%)}}
+.toast-tick{display:inline-block;white-space:nowrap;animation:sdro-ticker 9s linear infinite;padding-right:30px;}
 /* ── Bezeichnung über Eingabefeldern ── */
 .lbl{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.6px;}
 .fw{margin-bottom:12px;}
@@ -300,10 +300,6 @@ function startFirebaseListener(){
     if(currentView==="list")renderList();
     else if(currentView==="settings")renderSettings();
     updateUserIndicator();
-    // Neuinstallation via Listener erkennen: User unbekannt → Auswahl
-    if(p.users&&p.users.length>1&&!p.users.find(u=>u.id===currentUserId)){
-      setTimeout(()=>showUserSelectOnStart(),600);
-    }
   },err=>{
     console.warn("Firebase listener:",err);
     const el=document.getElementById("sync-lbl");
@@ -337,12 +333,7 @@ async function syncPull(){
     const snap=await _fbDb.ref("/sadro").get();
     const p=snap.val();
     if(!p){toast("Noch keine Daten in Firebase","info");if(el){el.style.color="var(--muted)";el.textContent="Leer";}return;}
-    // Sicherheit: nur laden wenn Firebase echte Daten hat (kein Überschreiben mit leer)
     if(p.meds&&p.meds.length>0){meds=p.meds;}
-    else if(p.meds&&p.meds.length===0&&meds.length>0){
-      // Firebase leer, lokal hat Daten → lokal gewinnt, hochladen
-      console.warn("syncPull: Firebase leer, behalte lokale Daten");
-    }
     if(p.groups&&p.groups.length>0)groups=p.groups;
     if(p.users&&p.users.length>0)users=p.users;
     if(p.log)LS.set("sdro_log",p.log);
@@ -351,10 +342,7 @@ async function syncPull(){
     updateUserIndicator();
     if(el){el.style.color="var(--green)";el.textContent="✓ Geladen";}
     toast(`☁️ ${p.meds?.length||0} Medikamente geladen`,"ok");
-    // Neuinstallation: wenn User aus Firebase geladen aber currentUser unbekannt → Auswahl zeigen
-    if(p.users&&p.users.length>1&&!p.users.find(u=>u.id===currentUserId)){
-      setTimeout(()=>showUserSelectOnStart(),600);
-    }
+    if(p.users&&p.users.length>1&&!p.users.find(u=>u.id===currentUserId))setTimeout(()=>showUserSelectOnStart(),600);
   }catch(e){
     if(el){el.style.color="var(--red)";el.textContent="Fehler";}
     toast("Laden fehlgeschlagen: "+e.message,"warn");
@@ -463,9 +451,13 @@ const DEF_MEDS=[
 // HAUPTDATEN: Aus localStorage laden oder Standards verwenden
 // ══════════════════════════════════════════════════════════════════
 let favs   = LS.get("sdro_favs") || [];
-let groups = (()=>{const _g=LS.get("sdro_g");return(_g&&Array.isArray(_g)&&_g.length)?_g:JSON.parse(JSON.stringify(DEF_GROUPS));})();
-let meds   = (()=>{const _m=LS.get("sdro_m");return(_m&&Array.isArray(_m)&&_m.length)?_m:JSON.parse(JSON.stringify(DEF_MEDS));})();
+let groups = LS.get("sdro_g")    || JSON.parse(JSON.stringify(DEF_GROUPS));
+if(!groups.length) groups=JSON.parse(JSON.stringify(DEF_GROUPS));
+let meds   = LS.get("sdro_m")    || JSON.parse(JSON.stringify(DEF_MEDS));
+if(!meds.length) meds=JSON.parse(JSON.stringify(DEF_MEDS));
 let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30,lowStockCount:1,lowStockUnit:"Packung"};
+if(!cfg.lowStockCount)cfg.lowStockCount=1;
+if(!cfg.lowStockUnit)cfg.lowStockUnit="Packung";
 if(!cfg.lowStockCount)cfg.lowStockCount=1;
 if(!cfg.lowStockUnit)cfg.lowStockUnit="Packung";
 let apiKey = LS.get("sdro_k")    || "";
@@ -562,25 +554,17 @@ function toast(msg,type="ok"){
   const el=document.getElementById("toast");
   const isLong=(typeof msg==="string"&&msg.length>52);
   if(isLong){
-    // Animationsdauer: proportional zur Textlänge (min 8s, max 18s)
     const dur=Math.min(18,Math.max(8,Math.round(msg.length/6)));
-    el.innerHTML="";
-    const sp=document.createElement("span");
-    sp.className="toast-tick";
-    sp.style.animation=`sdro-ticker ${dur}s linear`;
-    sp.textContent=msg;
-    el.appendChild(sp);
+    el.innerHTML="";const sp=document.createElement("span");sp.className="toast-tick";
+    sp.style.animation=`sdro-ticker ${dur}s linear`;sp.textContent=msg;el.appendChild(sp);
     el.style.background=type==="warn"?"var(--red)":type==="info"?"var(--accent)":"var(--green)";
     el.style.color="#fff";el.style.display="block";
-    clearTimeout(el._t);
-    // Erst nach vollständigem Ablauf ausblenden
-    el._t=setTimeout(()=>el.style.display="none",(dur+0.3)*1000);
-  }else{
-    el.textContent=msg;
-    el.style.background=type==="warn"?"var(--red)":type==="info"?"var(--accent)":"var(--green)";
-    el.style.color="#fff";el.style.display="block";
-    clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",3400);
+    clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",(dur+0.3)*1000);return;
   }
+  el.textContent=msg;
+  el.style.background=type==="warn"?"var(--red)":type==="info"?"var(--accent)":"var(--green)";
+  el.style.color="#fff";el.style.display="block";
+  clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",3400);
 }
 
 // "Nach oben"-Button einblenden beim Scrollen
@@ -1196,30 +1180,31 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
 
 // App-Update erzwingen
 function forceAppUpdate(){
-  toast("🔄 Prüfe auf neue Version...", "info");
-  // Cache-Parameter nur für den fetch (Versionsprüfung), NICHT für den Reload
-  const checkUrl=location.origin+location.pathname+"?_nc="+Date.now();
-  const baseUrl=location.origin+location.pathname;
+  toast("🔄 Lade neueste Version...", "info");
+  // Schritt 1: Browser-Cache leeren
+  const clearCache=()=>{
+    if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).catch(()=>{});
+  };
+  // Schritt 2: Neue Datei direkt vom Server holen (kein Cache, kein CDN-Bypass via fetch)
+  // GitHub Pages CDN: ?v=Timestamp ändert die URL → CDN liefert frisch
+  clearCache();
+  const checkUrl=location.origin+location.pathname+"?_nc="+Date.now();const baseUrl=location.origin+location.pathname;
+  // fetch mit Pragma/Cache-Control Header um CDN zu umgehen
   fetch(checkUrl,{cache:"no-store",headers:{"Pragma":"no-cache","Cache-Control":"no-cache, no-store"}})
     .then(r=>r.text())
     .then(html=>{
+      // Versionsnummer aus der neuen Datei extrahieren
       const match=html.match(/window\._buildTime="([^"]+)"/);
       const newVer=match?match[1]:"?";
       if(newVer===window._buildTime){
         toast("✅ Bereits aktuellste Version ("+newVer+")","ok");
       } else {
         toast("🔄 Neue Version: "+newVer+" – lade...", "ok");
-        // Browser-Cache leeren, dann mit der sauberen Basis-URL neu laden
-        const doClear=("caches" in window)
-          ?caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k))))
-          :Promise.resolve();
-        doClear.finally(()=>setTimeout(()=>location.replace(baseUrl),600));
+        const doClear=("caches" in window)?caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))):Promise.resolve();doClear.finally(()=>setTimeout(()=>location.replace(baseUrl),600));
       }
     })
     .catch(()=>{
-      // Fallback: Cache leeren + sauber neuladen
-      if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).finally(()=>location.replace(baseUrl));
-      else location.replace(baseUrl);
+      if("caches" in window)caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).finally(()=>location.replace(baseUrl));else location.replace(baseUrl);
     });
 }
 
@@ -1637,24 +1622,6 @@ function renderList(){
     html+=`</div>`;
   });
 
-  // Orphan-Medikamente (Gruppe fehlt/gelöscht) in eigenem Bereich zeigen
-  if(orphanMeds.length){
-    html+=`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--amberlo);border-radius:8px 8px 0 0;border:1px solid var(--amber)35">
-      <span style="font-size:14px">⚠️</span><span style="font-weight:600;font-size:12px;color:var(--amber)">Ohne Gruppe (${orphanMeds.length})</span>
-      <span style="font-size:10px;color:var(--muted);margin-left:4px">Bitte Gruppe zuweisen</span></div>
-      <div class="card" style="border-top:none;border-radius:0 0 8px 8px">`;
-    orphanMeds.forEach((med,i)=>{
-      const border=i<orphanMeds.length-1?"border-bottom:1px solid var(--border)":"";
-      html+=`<div class="med-row" style="${border}">
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">${h(med.name)}${med.strength?` <span style="font-size:11px;color:var(--muted)">${h(med.strength)}</span>`:""}</div>
-          <div style="font-size:11px;color:var(--muted)">${med.count} ${h(med.unit)}</div>
-        </div>
-        <button style="border:none;background:none;cursor:pointer;font-size:14px;padding:2px" onclick="editMed('${med.id}')">✏️</button>
-      </div>`;
-    });
-    html+=`</div></div>`;
-  }
   if(!meds.length)html+=`<div style="text-align:center;padding:52px 20px;color:var(--muted)"><div style="font-size:44px;margin-bottom:12px">💊</div><div style="font-weight:600;font-size:15px;margin-bottom:5px">Noch leer</div><div style="font-size:12px">Klicke auf + Hinzufügen</div></div>`;
   el.innerHTML=html;
 }
@@ -2111,4 +2078,20 @@ function renderSettings(){
           <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromFile()">📁 .txt hochladen</button>
           <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromClipboard()">📋 Einfügen (PC)</button>
         </div>
-        ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`
+        ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`:""}
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~450.000): nur kommerziell (ifap/Lauer). BfArM enthält ~3.000 Betäubungsmittel (kostenlos).</div>
+    </div>
+    <!-- Blister-Cache -->
+    <div class="card" style="padding:16px;margin-bottom:10px">
+      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🫧 Blister-Cache</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Gespeicherte Tabletten pro Blister. Wird automatisch beim Eintragen eines Medikaments gesetzt und kann hier korrigiert werden.</div>
+      <div style="background:var(--card2);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between"><span style="font-size:11px;color:var(--muted)">🫧 Gespeicherte Blistermenge</span><span style="font-size:11px;font-weight:600;color:${Object.keys(getBlisterCache()).length>0?"var(--accent)":"var(--muted)"}">${Object.keys(getBlisterCache()).length} Einträge</span></div>
+      </div>
+      <button class="btn btn-sm btn-full" style="background:var(--acclo);color:var(--accent)" onclick="showBlisterCache()">🫧 Blister-Cache ansehen & bearbeiten</button>
+    </div>
+    <!-- BLOCK 2: Medikamenten-Prüfung (vereint) -->
+    <div class="card" style="padding:16px;margin-bottom:10px">
+      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🔍 Medikamenten-Prüfung</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Prüft und ergänzt in <b>einem Schritt</b>: PZN, Name, Hersteller, Stärke, Anwendung, Einheit. Lädt dana
