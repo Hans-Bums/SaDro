@@ -281,9 +281,9 @@ function startFirebaseListener(){
     if(!p||!p.ts)return;
     const lastTs=LS.get("sdro_sync_ts");
     if(lastTs&&p.ts<=lastTs)return; // Keine älteren Daten laden
-    if(p.meds)meds=p.meds;
-    if(p.groups)groups=p.groups;
-    if(p.users){
+    if(p.meds&&p.meds.length>0){meds=p.meds;}
+    if(p.groups&&p.groups.length>0)groups=p.groups;
+    if(p.users&&p.users.length>0){
       users=p.users;
       LS.set("sdro_users",users);
       // currentUserId nur anpassen wenn nicht mehr vorhanden
@@ -337,9 +337,14 @@ async function syncPull(){
     const snap=await _fbDb.ref("/sadro").get();
     const p=snap.val();
     if(!p){toast("Noch keine Daten in Firebase","info");if(el){el.style.color="var(--muted)";el.textContent="Leer";}return;}
-    if(p.meds)meds=p.meds;
-    if(p.groups)groups=p.groups;
-    if(p.users)users=p.users;
+    // Sicherheit: nur laden wenn Firebase echte Daten hat (kein Überschreiben mit leer)
+    if(p.meds&&p.meds.length>0){meds=p.meds;}
+    else if(p.meds&&p.meds.length===0&&meds.length>0){
+      // Firebase leer, lokal hat Daten → lokal gewinnt, hochladen
+      console.warn("syncPull: Firebase leer, behalte lokale Daten");
+    }
+    if(p.groups&&p.groups.length>0)groups=p.groups;
+    if(p.users&&p.users.length>0)users=p.users;
     if(p.log)LS.set("sdro_log",p.log);
     save();LS.set("sdro_sync_ts",p.ts||new Date().toISOString());
     if(currentView==="list")renderList();else if(currentView==="settings")renderSettings();
@@ -1565,6 +1570,7 @@ function renderList(){
 
   // Gruppen-Ansicht: NUR Gruppen die mindestens 1 Medikament enthalten
   const dispGroups=filterGrp?groups.filter(g=>g.id===filterGrp):groups.filter(g=>meds.some(m=>m.groupId===g.id));
+  const orphanMeds=filterGrp?[]:meds.filter(m=>!groups.find(g=>g.id===m.groupId));
   dispGroups.forEach(g=>{
     const gm=meds.filter(m=>m.groupId===g.id);
     if(!gm.length)return; // Leere Gruppen überspringen
@@ -1631,6 +1637,24 @@ function renderList(){
     html+=`</div>`;
   });
 
+  // Orphan-Medikamente (Gruppe fehlt/gelöscht) in eigenem Bereich zeigen
+  if(orphanMeds.length){
+    html+=`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--amberlo);border-radius:8px 8px 0 0;border:1px solid var(--amber)35">
+      <span style="font-size:14px">⚠️</span><span style="font-weight:600;font-size:12px;color:var(--amber)">Ohne Gruppe (${orphanMeds.length})</span>
+      <span style="font-size:10px;color:var(--muted);margin-left:4px">Bitte Gruppe zuweisen</span></div>
+      <div class="card" style="border-top:none;border-radius:0 0 8px 8px">`;
+    orphanMeds.forEach((med,i)=>{
+      const border=i<orphanMeds.length-1?"border-bottom:1px solid var(--border)":"";
+      html+=`<div class="med-row" style="${border}">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px">${h(med.name)}${med.strength?` <span style="font-size:11px;color:var(--muted)">${h(med.strength)}</span>`:""}</div>
+          <div style="font-size:11px;color:var(--muted)">${med.count} ${h(med.unit)}</div>
+        </div>
+        <button style="border:none;background:none;cursor:pointer;font-size:14px;padding:2px" onclick="editMed('${med.id}')">✏️</button>
+      </div>`;
+    });
+    html+=`</div></div>`;
+  }
   if(!meds.length)html+=`<div style="text-align:center;padding:52px 20px;color:var(--muted)"><div style="font-size:44px;margin-bottom:12px">💊</div><div style="font-weight:600;font-size:15px;margin-bottom:5px">Noch leer</div><div style="font-size:12px">Klicke auf + Hinzufügen</div></div>`;
   el.innerHTML=html;
 }
@@ -2089,19 +2113,5 @@ function renderSettings(){
         </div>
         ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`:""}
       </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~450.000): nur kommerziell (ifap/Lauer). BfArM enthält ~3.000 Betäubungsmittel (kostenlos).</div>
-    </div>
-    <!-- Blister-Cache -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🫧 Blister-Cache</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Gespeicherte Tabletten pro Blister. Wird automatisch beim Eintragen eines Medikaments gesetzt und kann hier korrigiert werden.</div>
-      <div style="background:var(--card2);border-radius:8px;padding:10px 12px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between"><span style="font-size:11px;color:var(--muted)">🫧 Gespeicherte Blistermenge</span><span style="font-size:11px;font-weight:600;color:${Object.keys(getBlisterCache()).length>0?"var(--accent)":"var(--muted)"}">${Object.keys(getBlisterCache()).length} Einträge</span></div>
-      </div>
-      <button class="btn btn-sm btn-full" style="background:var(--acclo);color:var(--accent)" onclick="showBlisterCache()">🫧 Blister-Cache ansehen & bearbeiten</button>
-    </div>
-    <!-- BLOCK 2: Medikamenten-Prüfung (vereint) -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🔍 Medikamenten-Prüfung</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Prüft und ergänzt in <b>einem Schritt</b>: PZN, Name, Hersteller, Stärke, Anwendung, Einheit. Lädt danach automatisch ein Foto wenn keins vorhanden.</div>
-      <div class="alert alert-blue" style="margin-bottom:10px">💡 <div>In der Übersicht auf <b>PZN-Badge</b> oder <b>„+ PZN suchen"</b> klicken → Einzelprü
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~45
+    
