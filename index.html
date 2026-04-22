@@ -463,8 +463,8 @@ const DEF_MEDS=[
 // HAUPTDATEN: Aus localStorage laden oder Standards verwenden
 // ══════════════════════════════════════════════════════════════════
 let favs   = LS.get("sdro_favs") || [];
-let groups = LS.get("sdro_g")    || JSON.parse(JSON.stringify(DEF_GROUPS));
-let meds   = LS.get("sdro_m")    || JSON.parse(JSON.stringify(DEF_MEDS));
+let groups = (()=>{const _g=LS.get("sdro_g");return(_g&&Array.isArray(_g)&&_g.length)?_g:JSON.parse(JSON.stringify(DEF_GROUPS));})();
+let meds   = (()=>{const _m=LS.get("sdro_m");return(_m&&Array.isArray(_m)&&_m.length)?_m:JSON.parse(JSON.stringify(DEF_MEDS));})();
 let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30,lowStockCount:1,lowStockUnit:"Packung"};
 if(!cfg.lowStockCount)cfg.lowStockCount=1;
 if(!cfg.lowStockUnit)cfg.lowStockUnit="Packung";
@@ -2111,7 +2111,4 @@ function renderSettings(){
           <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromFile()">📁 .txt hochladen</button>
           <button class="btn btn-sm" style="flex:1;background:var(--faint);color:var(--muted)" onclick="importPZNFromClipboard()">📋 Einfügen (PC)</button>
         </div>
-        ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`:""}
-      </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:8px">ℹ️ Vollständige DE-PZN-DB (~45
-    
+        ${Object.keys(getPZNCache()).length>0?`<button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="showPZNCache()">💾 PZN-Cache</button>`
