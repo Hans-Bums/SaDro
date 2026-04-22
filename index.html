@@ -153,17 +153,38 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
     background_color:"#0F172A",
     theme_color:"#2563EB",
     icons:[
-      {src:iconB64,sizes:"192x192",type:"image/png",purpose:"any maskable"},
-      {src:iconB64,sizes:"512x512",type:"image/png",purpose:"any maskable"}
+      {src:iconB64,sizes:"192x192",type:"image/jpeg",purpose:"any maskable"},
+      {src:iconB64,sizes:"512x512",type:"image/jpeg",purpose:"any maskable"}
     ]
   };
-  const blob=new Blob([JSON.stringify(manifest)],{type:"application/manifest+json"});
-  const url=URL.createObjectURL(blob);
+  // data: URL statt blob: – stabiler für PWA-Installation
   const link=document.createElement("link");
   link.rel="manifest";
-  link.href=url;
+  link.href="data:application/manifest+json,"+encodeURIComponent(JSON.stringify(manifest));
   document.head.appendChild(link);
 })();
+
+// ══ Service Worker für PWA-Installation (Chrome/Android) ══
+if("serviceWorker" in navigator){
+  const _swCode=`
+    const CACHE="sadro-v1";
+    self.addEventListener("install",e=>e.waitUntil(self.skipWaiting()));
+    self.addEventListener("activate",e=>e.waitUntil(clients.claim()));
+    self.addEventListener("fetch",e=>{
+      if(e.request.method!=="GET")return;
+      e.respondWith(caches.open(CACHE).then(c=>
+        c.match(e.request).then(r=>r||fetch(e.request).then(res=>{
+          if(res&&res.status===200)c.put(e.request,res.clone());
+          return res;
+        }))
+      ));
+    });
+  `;
+  const _swBlob=new Blob([_swCode],{type:"text/javascript"});
+  const _swUrl=URL.createObjectURL(_swBlob);
+  navigator.serviceWorker.register(_swUrl,{scope:"./"}).catch(()=>{});
+}
+
 </script>
 </head>
 <body>
@@ -2087,11 +2108,4 @@ function renderSettings(){
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🫧 Blister-Cache</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Gespeicherte Tabletten pro Blister. Wird automatisch beim Eintragen eines Medikaments gesetzt und kann hier korrigiert werden.</div>
       <div style="background:var(--card2);border-radius:8px;padding:10px 12px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between"><span style="font-size:11px;color:var(--muted)">🫧 Gespeicherte Blistermenge</span><span style="font-size:11px;font-weight:600;color:${Object.keys(getBlisterCache()).length>0?"var(--accent)":"var(--muted)"}">${Object.keys(getBlisterCache()).length} Einträge</span></div>
-      </div>
-      <button class="btn btn-sm btn-full" style="background:var(--acclo);color:var(--accent)" onclick="showBlisterCache()">🫧 Blister-Cache ansehen & bearbeiten</button>
-    </div>
-    <!-- BLOCK 2: Medikamenten-Prüfung (vereint) -->
-    <div class="card" style="padding:16px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:8px">🔍 Medikamenten-Prüfung</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.6">Prüft und ergänzt in <b>einem Schritt</b>: PZN, Name, Hersteller, Stärke, Anwendung, Einheit. Lädt dana
+        <div style="display:flex;justify-content:space-between"><span style="font-size:11px;color:var(--muted)">🫧 Gespeicherte Blistermenge</span><span styl
