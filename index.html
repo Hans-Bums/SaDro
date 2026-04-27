@@ -122,7 +122,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 /* ── Toast-Benachrichtigung ── */
 #toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:9px 18px;border-radius:20px;font-size:12px;font-weight:600;z-index:999;box-shadow:var(--shadowmd);display:none;pointer-events:none;max-width:92vw;overflow:hidden;white-space:nowrap;}
 @keyframes sdro-ticker{0%{transform:translateX(110%)}100%{transform:translateX(-110%)}}
-.toast-tick{display:inline-block;white-space:nowrap;animation:sdro-ticker 9s linear infinite;padding-right:30px;}
+.toast-tick{display:inline-block;white-space:nowrap;animation:sdro-ticker var(--ticker-dur,9s) linear infinite;padding-right:30px;}
 /* ── Bezeichnung über Eingabefeldern ── */
 .lbl{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.6px;}
 .fw{margin-bottom:12px;}
@@ -280,7 +280,8 @@ function startFirebaseListener(){
     const p=snap.val();
     if(!p||!p.ts)return;
     const lastTs=LS.get("sdro_sync_ts");
-    if(lastTs&&p.ts<=lastTs)return; // Keine älteren Daten laden
+    // Timestamp-Check nur überspringen wenn exakt gleich (gleicher Push von diesem Gerät)
+    if(lastTs&&p.ts===lastTs)return;
     if(p.meds)meds=p.meds;
     if(p.groups)groups=p.groups;
     if(p.users){
@@ -356,9 +357,9 @@ setTimeout(()=>{
 // Echtzeit-Sync: Bei Tab-Fokus Daten abrufen
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&typeof _fbDb!=="undefined"&&_fbDb){syncPull();}});
 
-// Falls kein User existiert, Standarduser anlegen
-if(!users.length){users=[{id:"u1",name:"Standard"}];saveUsers();}
-if(!users.find(u=>u.id===currentUserId)){currentUserId=users[0].id;saveUsers();}
+// Falls kein User existiert, Standarduser anlegen (KEIN syncPush – Firebase überschreibt gleich)
+if(!users.length){users=[{id:"u1",name:"Standard"}];LS.set("sdro_users",users);LS.set("sdro_curuser",currentUserId);}
+if(!users.find(u=>u.id===currentUserId)){currentUserId=users[0].id;LS.set("sdro_curuser",currentUserId);}
 
 
 // ══════════════════════════════════════════════════════════════════
@@ -548,10 +549,20 @@ function genId(){return "id_"+Date.now()+"_"+Math.random().toString(36).slice(2,
 function toast(msg,type="ok"){
   const el=document.getElementById("toast");
   const isLong=(typeof msg==="string"&&msg.length>52);
-  if(isLong){el.innerHTML="";const sp=document.createElement("span");sp.className="toast-tick";sp.textContent=msg;el.appendChild(sp);}else{el.textContent=msg;}
+  if(isLong){
+    // Dauer: ~60px/s, ~8px pro Zeichen → ms = len*130, min 9s, max 30s
+    const dur=Math.min(30,Math.max(9,Math.ceil(msg.length*0.13)))+"s";
+    el.style.setProperty("--ticker-dur",dur);
+    el.innerHTML="";const sp=document.createElement("span");sp.className="toast-tick";sp.textContent=msg;el.appendChild(sp);
+    // Sichtbar solange Animation läuft (vollständige Laufschrift)
+    const ms=Math.min(30000,Math.max(9000,msg.length*130));
+    clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",ms);
+  }else{
+    el.textContent=msg;
+    clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",3400);
+  }
   el.style.background=type==="warn"?"var(--red)":type==="info"?"var(--accent)":"var(--green)";
   el.style.color="#fff";el.style.display="block";
-  clearTimeout(el._t);el._t=setTimeout(()=>el.style.display="none",3400);
 }
 
 // "Nach oben"-Button einblenden beim Scrollen
@@ -840,13 +851,16 @@ async function downloadPZNList(onProgress){
     try{
       if(onProgress)onProgress("Versuche: "+proxy.split("/")[2]+"...");
       const url=proxy+encodeURIComponent(TARGET);
-      const resp=await fetch(url,{signal:AbortSignal.timeout(12000)});
+      // AbortController statt AbortSignal.timeout (besser kompatibel mit mobilen Browsern)
+      const ctrl=new AbortController();
+      const tid=setTimeout(()=>ctrl.abort(),12000);
+      const resp=await fetch(url,{signal:ctrl.signal}).finally(()=>clearTimeout(tid));
       if(!resp.ok)continue;
       text=await resp.text();
       if(text&&text.length>1000)break;
-    }catch{continue;}
+    }catch(e){if(e.name==="AbortError"&&onProgress)onProgress("Timeout – nächster Proxy...");continue;}
   }
-  if(!text||text.length<1000)return{success:false,error:"Alle CORS-Proxies fehlgeschlagen. Bitte später erneut versuchen."};
+  if(!text||text.length<1000)return{success:false,error:"Alle CORS-Proxies fehlgeschlagen. Bitte über PC herunterladen und per 'Datei importieren' einlesen."};
   if(onProgress)onProgress("Verarbeite Einträge...");
   const lines=text.split("\n");
   const records=[];
@@ -1654,8 +1668,8 @@ function renderPhotoGallery(){
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" title="-5°" style="min-width:36px">-5°</button>
         <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" title="-1°" style="min-width:32px">-1°</button>
-        <input type="text" inputmode="numeric" id="rot-deg-inp" value="${window._photoRot||0}"
-               style="width:56px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter')applyRotDeg()" placeholder="0"/>
+        <input type="number" id="rot-deg-inp" value="${window._photoRot||0}" min="-360" max="360"
+               style="width:64px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter')applyRotDeg()" placeholder="0"/>
         <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" title="+1°" style="min-width:32px">+1°</button>
         <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" title="+5°" style="min-width:36px">+5°</button>
         <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()">↻ Anwenden</button>
@@ -2162,14 +2176,34 @@ function renderSettings(){
       ${notifRow("notifyLowStock","Fast leer Warnung","Warnung wenn Bestand unter Schwellenwert")}
       ${cfg.notifyLowStock?`<div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Warnen wenn Bestand kleiner oder gleich:</div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
           <input type="number" min="1" max="99" value="${cfg.lowStockCount||1}"
             oninput="cfg.lowStockCount=Math.max(1,parseInt(this.value)||1);save();"
             style="width:56px;text-align:center;font-weight:700;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text)"/>
-          <select onchange="cfg.lowStockUnit=this.value;save();"
+          <select onchange="cfg.lowStockUnit=this.value;save();renderSettings();"
             style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px">
-            ${[...new Set(["Packung","Blister",...meds.map(m=>m.unit),...meds.filter(m=>m.pillUnit).map(m=>m.pillUnit)].filter(Boolean))].map(u=>`<option value="${u}" ${(cfg.lowStockUnit||"Packung")===u?"selected":""}>${u}</option>`).join("")}
+            ${(()=>{
+              const hasFlasche=meds.some(m=>m.unit==="Flasche"||m.pillUnit==="Flasche");
+              const hasBlister=meds.some(m=>m.pillUnit&&["Tablette","Kapsel","Dragee","Filmtablette"].includes(m.pillUnit));
+              const units=["Packung"];
+              if(hasBlister)units.push("Blister");
+              if(hasFlasche)units.push("Flasche");
+              meds.forEach(m=>{if(m.unit&&!units.includes(m.unit))units.push(m.unit);if(m.pillUnit&&!units.includes(m.pillUnit))units.push(m.pillUnit);});
+              return units.filter(Boolean).map(u=>`<option value="${u}" ${(cfg.lowStockUnit||"Packung")===u?"selected":""}>${u}</option>`).join("");
+            })()}
           </select>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Schnellauswahl:</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${(()=>{
+            const hasFlasche=meds.some(m=>m.unit==="Flasche"||m.pillUnit==="Flasche");
+            const hasBlister=meds.some(m=>m.pillUnit&&["Tablette","Kapsel","Dragee","Filmtablette"].includes(m.pillUnit));
+            const presets=[{n:1,u:"Packung",always:true},{n:1,u:"Blister",show:hasBlister},{n:1,u:"Flasche",show:hasFlasche}];
+            return presets.filter(p=>p.always||p.show).map(p=>{
+              const active=(cfg.lowStockCount||1)===p.n&&(cfg.lowStockUnit||"Packung")===p.u;
+              return`<button onclick="cfg.lowStockCount=${p.n};cfg.lowStockUnit='${p.u}';save();renderSettings();" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${active?"var(--accent)":"var(--border)"};background:${active?"var(--acclo)":"var(--surface)"};color:${active?"var(--accent)":"var(--text)"};font-size:12px;font-weight:${active?700:400};cursor:pointer">${p.n} ${p.u}</button>`;
+            }).join("");
+          })()}
         </div>
       </div>`:""}
       <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
@@ -2181,10 +2215,13 @@ function renderSettings(){
       </div>
     </div>
     <!-- Daten-Hinweis -->
-    <div class="card" style="padding:14px;margin-bottom:10px;background:var(--amberlo);border:1px solid var(--amber)44">
-      <div style="font-weight:600;font-size:13px;color:var(--amber);margin-bottom:6px">⚠️ Daten nur in diesem Browser gespeichert</div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">Andere Geräte sehen diese Daten nicht. Regelmäßig exportieren!</div>
-      <button class="btn btn-sm btn-ghost btn-full" onclick="importData()">📤 CSV importieren</button>
+    <div class="card" style="padding:14px;margin-bottom:10px;background:var(--acclo);border:1px solid var(--accent)44">
+      <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:6px">☁️ Cloud-Synchronisation aktiv</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">Daten werden automatisch über Firebase synchronisiert. Alle Geräte die die App öffnen, erhalten sofort die aktuellen Daten. Bei Änderungen werden alle offenen Apps innerhalb von Sekunden aktualisiert.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" style="flex:1" onclick="syncPull()">⬇️ Jetzt laden</button>
+        <button class="btn btn-sm btn-ghost" style="flex:1" onclick="importData()">📤 CSV importieren</button>
+      </div>
     </div>
     <!-- Export -->
     <div class="card" style="padding:16px;margin-bottom:10px">
@@ -2812,23 +2849,42 @@ function camStop(){stopCam();camSetState(false);}
 
 // Foto aufnehmen, automatisch zuschneiden und als Vorschau hinzufügen
 async function takePhoto(){
-  const video=document.getElementById("cam-video");if(!video||!_camStream)return;
-  const canvas=document.createElement("canvas");canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  const video=document.getElementById("cam-video");
+  // Stream-Gesundheitsprüfung: wenn inaktiv → neu starten
+  if(!_camStream||!_camStream.active){
+    _camStream=null;
+    await new Promise((res,rej)=>{
+      navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:_camFacing},width:{ideal:1280}}}).then(stream=>{
+        _camStream=stream;if(video){video.srcObject=stream;video.style.display="block";video.play();}
+        camSetState(true);setTimeout(res,600);
+      }).catch(rej);
+    }).catch(()=>{const err=document.getElementById("cam-err");if(err){err.textContent="Kamera konnte nicht neu gestartet werden";err.style.display="block";}return;});
+    if(!_camStream)return;
+  }
+  if(!video)return;
+  const canvas=document.createElement("canvas");
+  canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;
   canvas.getContext("2d").drawImage(video,0,0);
   const raw=canvas.toDataURL("image/jpeg",.88);
-  const result=await autoCropPhoto(raw);
+  // autoCropPhoto mit Timeout absichern
+  let result;
+  try{
+    result=await Promise.race([autoCropPhoto(raw),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),6000))]);
+  }catch{result={url:raw};}
   // Status unten im Kamerabild zeigen (kein Toast)
   const _cs=document.getElementById("cam-status");
-  if(_cs){_cs.textContent="📸 Foto "+_camPhotos.length+" aufgenommen";_cs.style.display="block";clearTimeout(_cs._t);_cs._t=setTimeout(()=>_cs.style.display="none",2500);}
+  const photoNum=(_camPhotos.length+1);
+  if(_cs){_cs.textContent="📸 Foto "+photoNum+" aufgenommen";_cs.style.display="block";clearTimeout(_cs._t);_cs._t=setTimeout(()=>_cs.style.display="none",2500);}
   const compressed=await new Promise(res=>{
     const img=new Image();img.onload=()=>{
       const s=Math.min(1,800/img.width);const c=document.createElement("canvas");
       c.width=img.width*s;c.height=img.height*s;c.getContext("2d").drawImage(img,0,0,c.width,c.height);
       res(c.toDataURL("image/jpeg",.78));
-    };img.src=result.url;
+    };img.onerror=()=>res(raw);img.src=result.url||raw;
   });
   _camPhotos.push(compressed);
-  updateThumbs();document.getElementById("analyse-btn").style.display="block";
+  updateThumbs();
+  const ab=document.getElementById("analyse-btn");if(ab)ab.style.display="block";
 }
 
 // Foto-Vorschau-Streifen aktualisieren
@@ -2852,7 +2908,7 @@ function dismissCamHint(){
   if(ov)ov.style.display="none";
 }
 
-function stopCam(){if(_camStream){_camStream.getTracks().forEach(t=>t.stop());_camStream=null;}const v=document.getElementById("cam-video");if(v)v.style.display="none";}
+function stopCam(){if(_camStream){_camStream.getTracks().forEach(t=>t.stop());_camStream=null;}const v=document.getElementById("cam-video");if(v){v.srcObject=null;v.style.display="none";}}
 
 // ══════════════════════════════════════════════════════════════════
 // KI-ANALYSE: Fotos auswerten und Formular automatisch befüllen
@@ -2902,7 +2958,7 @@ Wenn Bild komplett unlesbar (nur Hand/Finger sichtbar, kein Text): {"known":fals
       setTimeout(()=>{
         setVal("med-name",p.name||"");
         if(p.strength)setVal("med-strength",p.strength);
-        if(p.manufacturer)setVal("med-maker",p.manufacturer);;setVal("med-purpose",p.purpose||"");
+        if(p.manufacturer)setVal("med-maker",p.manufacturer);setVal("med-purpose",p.purpose||"");
         if(p.activeIngredient)setVal("med-ingredient",p.activeIngredient);
         setVal("med-pzn",(p.pzn&&p.pzn!=="null")?p.pzn:"");
         setVal("med-count",p.count||1);setVal("med-exp",expiryDate);
@@ -3222,12 +3278,23 @@ function selectEntMed(id){
 function addEntRow(){_entRows.push({qty:1,unit:_entMed?.pillUnit||"Tablette"});renderEntModal();}
 function removeEntRow(i){_entRows=_entRows.filter((_,j)=>j!==i);renderEntModal();}
 
+// ── Stück pro VOLLER Packung (neu) ──
+// Verwendet blisterCount × pillsPerBlister wenn vorhanden (korrekt auch bei teils geöffnetem Bestand)
+function getFullPackPills(med){
+  const ppb=getBlisterPPB(med)||med.pillsPerBlister;
+  const bc=Number(med.blisterCount)||0;
+  if(ppb&&bc>0)return ppb*bc;
+  // Fallback: aus Bestand ableiten (nur korrekt wenn alle Packungen voll)
+  if(med.totalPills&&med.count>0)return Math.round(med.totalPills/med.count);
+  return null;
+}
+
 // Vorschau: Verbleibenden Bestand nach Entnahme berechnen
 function updateEntPreview(){
   if(!_entMed)return;
   const ppbCached=getBlisterPPB(_entMed);
-  // ppp = Tabletten pro PACKUNG. ppbCached = Tabletten pro BLISTER. Nie verwechseln!
-  const ppp=_entMed.totalPills&&_entMed.count>0?Math.round(_entMed.totalPills/_entMed.count):null;
+  // Für Packungsberechnung: volle Packung (blisterCount×ppb) statt Durchschnitt!
+  const ppp=getFullPackPills(_entMed);
   const el=document.getElementById("ent-remain");if(!el)return;
   // Blister-Zeile ohne bekannte Menge → Warnung, keine Berechnung
   const hasBlister=_entRows.some(r=>r.unit.toLowerCase()==="blister");
@@ -3235,25 +3302,24 @@ function updateEntPreview(){
     el.textContent="⚠️ Blistermenge eintragen – Buchen gesperrt";
     el.style.color="var(--amber)";return;
   }
-  let packDelta=0,pillDelta=0;
+  let pillDelta=0;
   _entRows.forEach(r=>{
     const u=r.unit.toLowerCase();const mu=_entMed.unit.toLowerCase();
-    if(u===mu){packDelta+=r.qty;}
-    else if(u==="blister"){
-      // Sanity-Check: pib darf nicht > totalPills des Medikaments sein
-      const rawPib=ppbCached||1;
-      const ppp2=_entMed.totalPills&&_entMed.count>0?Math.round(_entMed.totalPills/_entMed.count):0;
-      // Nur korrigieren wenn pib größer als eine ganze Packung (nicht nur Gesamtbestand)
-      const pib=ppp2>0&&rawPib>ppp2*1.1?1:rawPib;
+    if(u===mu){
+      // Packungseinheit → in Tabletten umrechnen für konsistente Berechnung
+      if(ppp&&ppp>0)pillDelta+=r.qty*ppp;else pillDelta+=r.qty;
+    }else if(u==="blister"){
+      const pib=ppbCached||1;
       pillDelta+=r.qty*pib;
-      if(ppp&&ppp>1)packDelta+=r.qty*pib/ppp;else packDelta+=r.qty;
     }else if(["tablette","kapsel","tropfen","ml","ampulle"].includes(u)){
       pillDelta+=r.qty;
-      if(ppp&&ppp>1)packDelta+=r.qty/ppp;
-    }else{packDelta+=r.qty;}
+    }else{
+      if(ppp&&ppp>0)pillDelta+=r.qty*ppp;
+    }
   });
   const newPills=_entMed.totalPills!=null?Math.max(0,_entMed.totalPills-pillDelta):null;
-  const newPacks=newPills!=null&&ppp&&ppp>1?Math.max(0,Math.ceil(newPills/ppp)):Math.max(0,Math.round(_entMed.count-packDelta));
+  // Packungszahl: immer aus Stückzahl ÷ volle Packung ableiten (exakt, auch bei teils geöffnetem Bestand)
+  const newPacks=newPills!=null&&ppp&&ppp>0?Math.max(0,Math.ceil(newPills/ppp)):Math.max(0,Math.round(_entMed.count-(pillDelta/(ppp||1))));
   el.textContent=(newPills!=null?newPills+" "+(_entMed.pillUnit||"Tablette")+" ("+newPacks+" "+_entMed.unit+")":newPacks+" "+_entMed.unit)+(newPacks===0?" – Nachkaufen!":"");
   el.style.color=newPacks===0?"var(--red)":"var(--text)";
 }
@@ -3427,63 +3493,64 @@ function saveBlisterAmt(rowIdx){
 function bookEntnahme(){
   if(!_entMed)return;
   const med=meds.find(m=>m.id===_entMed.id);if(!med)return;
-  // Guard: Blister ohne Menge ODER unrealistische Menge (> Gesamtbestand) → Dialog
+  // ── Blister-Guard: Menge bekannt? ─────────────────────────────
   const blisterRowIdx=_entRows.findIndex(r=>r.unit.toLowerCase()==="blister");
   if(blisterRowIdx>=0){
-    const pibChk=getCachedBlisterPPB(med); // Nur user-bestätigt – AI-Wert zählt nicht
-    // Ungültig nur wenn pib > Tabletten pro PACKUNG (nicht pro Gesamtbestand)
-    // Letzter Blister entnehmen darf 0 ergeben – das ist korrekt!
-    const pillsPerPack=med.totalPills&&med.count>0?Math.round(med.totalPills/med.count):0;
-    const pibFull=getBlisterPPB(med); // Für Plausibilitätsprüfung inkl. AI-Wert
-    // Bad: pib >= pillsPerPack bedeutet 1 Blister = ganze Packung → verdächtig → Dialog
-    const pibBad=pibFull&&pillsPerPack>0&&pibFull>=pillsPerPack;
+    const pibChk=getCachedBlisterPPB(med);
+    const fppChk=getFullPackPills(med);
+    const pibFull=getBlisterPPB(med);
+    // Blister = ganze Packung → verdächtig → Cache löschen + Dialog
+    const pibBad=pibFull&&fppChk&&pibFull>=fppChk;
     if(!pibChk||pibBad){
-      if(pibBad){
-        meds=meds.map(m=>m.id===med.id?{...m,pillsPerBlister:null}:m);
-        const bc=getBlisterCache();delete bc[med.id];LS.set('sdro_blister_cache',bc);
-        save();
-      }
+      if(pibBad){meds=meds.map(m=>m.id===med.id?{...m,pillsPerBlister:null}:m);const bc=getBlisterCache();delete bc[med.id];LS.set('sdro_blister_cache',bc);save();}
       openBlisterAmountDialog(blisterRowIdx);return;
     }
   }
-  const summary=_entRows.map(r=>r.qty+" "+r.unit).join(" + ");
-  // Stückzahl pro Packung ermitteln
-  // ppp = Stück pro Zähleinheit (z.B. 30 Tabletten pro Packung, nicht pro Blister)
-  // ppp = Tabletten pro PACKUNG, niemals pillsPerBlister (=Tabletten pro Blister, anderes Konzept!)
-  const ppp=med.totalPills&&med.count>0?Math.round(med.totalPills/med.count):null;
-  let packDelta=0,pillDelta=0;
-  _entRows.forEach(r=>{
-    const u=r.unit.toLowerCase();const mu=med.unit.toLowerCase();
-    const isSmall=["tablette","kapsel","tropfen","ml","ampulle"].includes(u);
-    const isBlisterUnit=(u==="blister");
-    const medIsBlister=(mu==="blister");
-    if(isBlisterUnit){
-      // Blister-Entnahme: immer über Blister-Cache rechnen – NIE ppp (Gesamt)
-      const pib=getBlisterPPB(med)||(medIsBlister&&ppp?ppp:1);
-      pillDelta+=r.qty*pib;
-      if(medIsBlister){packDelta+=r.qty;} // Einheit ist Blister → 1:1
-      else if(ppp&&ppp>0)packDelta+=r.qty*pib/ppp; // anteilig von Packung
-    }else if(isSmall){
-      // Einzelne Tablette/Kapsel → nur Stückzahl reduzieren
-      pillDelta+=r.qty;
-      if(ppp&&ppp>1)packDelta+=r.qty/ppp;
-    }else if(u===mu){
-      // Gleiche Verpackungseinheit wie Bestand (Packung, Spray, Flasche …)
-      packDelta+=r.qty;
-      if(ppp&&!medIsBlister)pillDelta+=r.qty*ppp;
-    }else{
-      // Andere Verpackungseinheit → Packungen direkt abziehen
-      packDelta+=r.qty;
+  // ── Packungsauswahl: angefangene vs. neue Packung ──────────────
+  const packRowIdx=_entRows.findIndex(r=>r.unit.toLowerCase()===med.unit.toLowerCase()&&med.unit.toLowerCase()==="packung");
+  if(packRowIdx>=0&&med.count>1&&med.totalPills!=null){
+    const fpp=getFullPackPills(med);
+    if(fpp&&fpp>0){
+      const openPills=med.totalPills%fpp;
+      // Angefangene Packung vorhanden → Dialog zeigen
+      if(openPills>0&&openPills<fpp){
+        showPackageChoiceDialog(med,openPills,fpp);return;
+      }
     }
-  });
+  }
+  _doBookEntnahme(med);
+}
+
+function _doBookEntnahme(med,overridePillsDelta){
+  const summary=_entRows.map(r=>r.qty+" "+r.unit).join(" + ");
+  // Stück pro VOLLER Packung (blisterCount×ppb, korrekt auch bei teils geöffnetem Bestand)
+  const ppp=getFullPackPills(med);
+  let pillDelta=overridePillsDelta??0;
+  if(overridePillsDelta===undefined){
+    _entRows.forEach(r=>{
+      const u=r.unit.toLowerCase();const mu=med.unit.toLowerCase();
+      const isSmall=["tablette","kapsel","tropfen","ml","ampulle"].includes(u);
+      const medIsBlister=(mu==="blister");
+      if(u==="blister"){
+        const pib=getBlisterPPB(med)||(medIsBlister&&ppp?ppp:1);
+        pillDelta+=r.qty*pib;
+      }else if(isSmall){
+        pillDelta+=r.qty;
+      }else if(u===mu){
+        if(ppp&&ppp>0)pillDelta+=r.qty*ppp;else pillDelta+=r.qty;
+      }else{
+        if(ppp&&ppp>0)pillDelta+=r.qty*ppp;else pillDelta+=r.qty;
+      }
+    });
+  }
   // Neuen Bestand berechnen
   const newTotalPills=med.totalPills!=null?Math.max(0,med.totalPills-pillDelta):null;
   let newCount;
-  if(newTotalPills!=null&&ppp&&ppp>1){
-    // Packungen aus Stückzahl ableiten
+  if(newTotalPills!=null&&ppp&&ppp>0){
+    // Packungen immer aus Stückzahl ÷ volle Packung (ceil = angefangene Packung zählt als 1)
     newCount=Math.max(0,Math.ceil(newTotalPills/ppp));
   }else{
-    newCount=Math.max(0,Math.round(med.count-packDelta));
+    newCount=Math.max(0,Math.round(med.count-(pillDelta/(ppp||1))));
   }
   const _upd={...med,count:newCount,totalPills:newTotalPills};
   meds=meds.map(m=>m.id===med.id?{..._upd,lowStock:isLowStock(_upd)}:m);
@@ -3515,6 +3582,57 @@ function bookEntnahme(){
     closeModal();renderList();
     const rem=newTotalPills!=null?" (noch "+newTotalPills+" "+(med.pillUnit||"Tablette")+")":"";
     toast(med.name+": "+summary+" entnommen → "+newCount+" "+med.unit+rem,"ok");
+  }
+}
+
+// ── Packungsauswahl-Dialog: angefangene oder neue Packung ─────────
+function showPackageChoiceDialog(med,openPills,fullPackPills){
+  const ppb=getBlisterPPB(med)||med.pillsPerBlister||0;
+  const bc=Number(med.blisterCount)||0;
+  const openBlisters=ppb>0?Math.round(openPills/ppb):null;
+  const fullBlisters=bc||null;
+  const pillUnit=med.pillUnit||"Tablette";
+  const blisterHint=b=>b?` · ${b} Blister`:"";
+  const medId=med.id;
+  openModal(`<div>
+    <div style="font-size:15px;font-weight:700;margin-bottom:6px">📦 Welche Packung entnehmen?</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${h(med.name)}</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn btn-full" style="background:var(--amberlo);border:2px solid var(--amber);text-align:left;padding:12px 14px" onclick="bookEntnahmeWithChoice('${medId}',${openPills})">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">📂 Angefangene Packung</div>
+        <div style="font-size:11px;color:var(--amber)">${openPills} ${pillUnit}${blisterHint(openBlisters)} noch vorhanden</div>
+      </button>
+      <button class="btn btn-full" style="background:var(--acclo);border:2px solid var(--accent);text-align:left;padding:12px 14px" onclick="bookEntnahmeWithChoice('${medId}',${fullPackPills})">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">📦 Neue Packung (ungeöffnet)</div>
+        <div style="font-size:11px;color:var(--accent)">${fullPackPills} ${pillUnit}${blisterHint(fullBlisters)} voll</div>
+      </button>
+      <button class="btn btn-ghost btn-full" onclick="closeModal()">Abbrechen</button>
+    </div>
+  </div>`,"center-overlay",true);
+}
+
+function bookEntnahmeWithChoice(medId,pillsToRemove){
+  closeModal();
+  const med=meds.find(m=>m.id===medId);if(!med)return;
+  _entMed=med;
+  const label=pillsToRemove<(getFullPackPills(med)||Infinity)?"Angefangene Packung":"Neue Packung";
+  // Entnahme direkt mit bekannter Pillenzahl buchen
+  const ppp=getFullPackPills(med);
+  const newTotalPills=med.totalPills!=null?Math.max(0,med.totalPills-pillsToRemove):null;
+  const newCount=newTotalPills!=null&&ppp&&ppp>0?Math.max(0,Math.ceil(newTotalPills/ppp)):Math.max(0,med.count-1);
+  const _upd={...med,count:newCount,totalPills:newTotalPills};
+  meds=meds.map(m=>m.id===medId?{..._upd,lowStock:isLowStock(_upd)}:m);
+  addLogEntry("remove",{...med,count:newCount,totalPills:newTotalPills},label+" entnommen",null);
+  save();
+  if(newCount===0&&(newTotalPills===null||newTotalPills===0)){
+    renderList();
+    const isFavorit=isFav(medId);
+    if(isFavorit){toast(`⭐ ${med.name} aufgebraucht – bleibt als Favorit`,"warn");}
+    else{openModal(`<div style="text-align:center;margin-bottom:14px"><div style="font-size:36px;margin-bottom:8px">📭</div><div style="font-size:15px;font-weight:700;margin-bottom:6px">${h(med.name)} aufgebraucht</div><div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:18px">Was möchtest du tun?</div><div style="display:flex;flex-direction:column;gap:8px"><button class="btn btn-danger btn-full" onclick="removeMedAfterEmpty('${medId}')">🗑️ Aus Liste entfernen</button><button class="btn btn-full" style="background:var(--card2);color:var(--text);border:1px solid var(--border)" onclick="closeModal();renderList()">📋 Behalten (Bestand = 0)</button></div></div>`,"center-overlay",true);}
+  }else{
+    renderList();
+    const rem=newTotalPills!=null?` (noch ${newTotalPills} ${med.pillUnit||"Tablette"})`:"";
+    toast(`${med.name}: ${label} entnommen → ${newCount} ${med.unit}${rem}`,"ok");
   }
 }
 
@@ -3587,7 +3705,7 @@ function _renderFavsModal(q){
           ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(m.name)}${m.strength?" · "+h(m.strength):""}</div>
-            ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':'<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>'}
+            ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':`<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>`}
           </div>
           <div style="display:flex;gap:5px;flex-shrink:0">
             <button class="btn btn-sm" onclick="closeModal();editMed('${m.id}')">✏️</button>
