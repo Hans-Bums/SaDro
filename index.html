@@ -520,10 +520,13 @@ function getDisplayPhoto(med){
 // Ablauf-Informationen für Farbgebung und Anzeige
 function expInfo(s){
   const d=daysLeft(s);if(d===null)return null;
-  if(d<0) return{col:"var(--red)",  bg:"var(--redlo)",  lbl:"Abgelaufen",icon:"🚨",urgent:true};
-  if(d<30)return{col:"var(--red)",  bg:"var(--redlo)",  lbl:Math.round(d)+" Tage",icon:"⚠️",urgent:true};
-  if(d<90)return{col:"var(--amber)",bg:"var(--amberlo)",lbl:Math.round(d/30)+" Mo.",icon:"⏳",urgent:false};
-  return      {col:"var(--green)", bg:"var(--greenlo)", lbl:"OK",icon:"✅",urgent:false};
+  const warn=cfg.mhdNotifyDays||30;
+  // Smarter label: days if <60, months if >=60
+  const lbl=d<60?Math.round(d)+" Tage":Math.round(d/30)+" Mo.";
+  if(d<0)     return{col:"var(--red)",  bg:"var(--redlo)",  lbl:"Abgelaufen",icon:"🚨",urgent:true};
+  if(d<warn)  return{col:"var(--red)",  bg:"var(--redlo)",  lbl:Math.round(d)+" Tage",icon:"⚠️",urgent:true};
+  if(d<warn*3)return{col:"var(--amber)",bg:"var(--amberlo)",lbl,icon:"⏳",urgent:false};
+  return       {col:"var(--green)", bg:"var(--greenlo)", lbl:"OK",icon:"✅",urgent:false};
 }
 
 // Datum auf Ende des Monats setzen (z.B. 2026-06-01 → 2026-06-30)
@@ -668,8 +671,8 @@ async function _tryPZNCDNPatterns(pzn){
   return null;
 }
 
-// Gefundene URL ins Med-Objekt speichern
-function _applyMedPhoto(medId,imgUrl,force){
+// Gefundene URL ins Med-Objekt speichern (silent=true unterdrückt Toast – Aufrufer zeigt eigenen)
+function _applyMedPhoto(medId,imgUrl,force,silent=false){
   const m=meds.find(x=>x.id===medId);if(!m)return;
   const keep=(m.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
   if(keep.length>0&&!force){
@@ -678,56 +681,59 @@ function _applyMedPhoto(medId,imgUrl,force){
     meds=meds.map(x=>x.id===medId?{...x,photo:imgUrl,photoIsUrl:true,photos:keep.length>0?[...keep,imgUrl]:[imgUrl]}:x);
   }
   save();if(currentView==="list")renderList();
-  toast("📸 Online-Foto für "+m.name+" verknüpft","ok");
+  if(!silent)toast("📸 Online-Foto für "+m.name+" verknüpft","ok");
 }
 
+// Gibt true zurück wenn ein Foto gefunden + gespeichert wurde, sonst false
 async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
-  if(!med)return;
+  if(!med)return false;
   if(!force){
-    if(med.photoIsUrl&&med.photo)return;
+    if(med.photoIsUrl&&med.photo)return true; // schon vorhanden
     const _hasCam=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
     const _hasUrl=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('http'));
-    if(_hasCam&&_hasUrl)return;
+    if(_hasCam&&_hasUrl)return true; // schon vollständig
   }
   const key=(apiKey||LS.get("sdro_k")||"").trim();
 
   // ── Phase 1: PZN-CDN-Muster (kostenlos, kein API-Call) ──────────
   if(med.pzn){
     const cdnUrl=await _tryPZNCDNPatterns(med.pzn);
-    if(cdnUrl){_applyMedPhoto(medId,cdnUrl,force);return;}
+    if(cdnUrl){_applyMedPhoto(medId,cdnUrl,force,force/*silent wenn manuell*/);return true;}
   }
 
   // ── Phase 2: Claude web_search ───────────────────────────────────
-  if(!key||!key.startsWith("sk-ant-"))return;
+  if(!key||!key.startsWith("sk-ant-"))return false;
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
-        model:"claude-haiku-4-5-20251001",max_tokens:400,
+        model:"claude-haiku-4-5-20251001",max_tokens:600,
         tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Suche die Produktseite für das deutsche Medikament "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" von "+med.manufacturer:""} auf shop-apotheke.com oder aponeo.de.
-Öffne die Produktseite und gib mir den Inhalt des og:image Meta-Tags ODER die erste direkte Bild-URL (.jpg/.jpeg/.png/.webp) die du auf der Seite findest.
-Antworte NUR mit der URL – kein Text, kein Markdown, keine Erklärung.`}]
+        messages:[{role:"user",content:`Suche nach einem Produktbild für das deutsche Medikament "${med.name}"${med.pzn?" (PZN "+med.pzn+")":""}${med.manufacturer?" von "+med.manufacturer:""}.
+Durchsuche shop-apotheke.com, aponeo.de oder docmorris.de.
+Gib NUR die direkte URL der Produktbilddatei zurück (endet auf .jpg, .jpeg, .png oder .webp).
+Kein Text davor oder danach – ausschließlich die nackte URL.`}]
       })
     });
-    if(!r.ok)return;
+    if(!r.ok)return false;
     const resp=await r.json();
     const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join("").trim();
 
-    // Nur direkte Bild-URLs akzeptieren (mit Bild-Extension oder CDN-Domains)
+    // Nur direkte Bild-URLs akzeptieren (mit Bild-Extension oder bekannten CDN-Domains)
     const byExt=text.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>]*)?/i);
     const byCDN=text.match(/https?:\/\/(?:media|cdn|img|image|images|static|assets)\.[^\s"'<>]{15,}/i);
     const rawUrl=(byExt?.[0]||byCDN?.[0]||"").replace(/[.,;)>]+$/,"");
-    if(!rawUrl||!rawUrl.startsWith("http"))return;
+    if(!rawUrl||!rawUrl.startsWith("http"))return false;
 
-    // ── Phase 3: URL validieren – lädt sie wirklich? ────────────────
+    // ── Phase 3: URL validieren – lädt sie wirklich als Bild? ────────
     const valid=await _imgLoads(rawUrl,5000);
-    if(!valid){console.warn("fetchMedImageFromWeb: URL lädt nicht:",rawUrl);return;}
+    if(!valid){console.warn("fetchMedImageFromWeb: URL lädt nicht als Bild:",rawUrl);return false;}
 
-    _applyMedPhoto(medId,rawUrl,force);
-  }catch(e){console.warn("fetchMedImageFromWeb:",e);}
+    _applyMedPhoto(medId,rawUrl,force,force/*silent wenn manuell*/);
+    return true;
+  }catch(e){console.warn("fetchMedImageFromWeb:",e);return false;}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1248,32 +1254,29 @@ totalPills=Gesamtanzahl als Zahl. imageUrl=direkte Produktfoto-URL oder null. Ni
 
 // App-Update erzwingen
 function forceAppUpdate(){
-  toast("🔄 Lade neueste Version...", "info");
-  // Schritt 1: Browser-Cache leeren
-  const clearCache=()=>{
-    if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).catch(()=>{});
-  };
-  // Schritt 2: Neue Datei direkt vom Server holen (kein Cache, kein CDN-Bypass via fetch)
-  // GitHub Pages CDN: ?v=Timestamp ändert die URL → CDN liefert frisch
-  clearCache();
-  const fresh=location.origin+location.pathname+"?v="+Date.now()+"&r="+Math.random().toString(36).slice(2);
-  // fetch mit Pragma/Cache-Control Header um CDN zu umgehen
+  toast("🔄 Prüfe auf neue Version...", "info");
+  // Browser-Cache (Service Worker) leeren
+  if("caches" in window) caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))).catch(()=>{});
+  // Frische Kopie der App vom Server holen (Cache-Bypass via Query-String)
+  const fresh=location.origin+location.pathname+"?nocache="+Date.now();
   fetch(fresh,{cache:"no-store",headers:{"Pragma":"no-cache","Cache-Control":"no-cache, no-store"}})
     .then(r=>r.text())
     .then(html=>{
-      // Versionsnummer aus der neuen Datei extrahieren
       const match=html.match(/window\._buildTime="([^"]+)"/);
       const newVer=match?match[1]:"?";
       if(newVer===window._buildTime){
         toast("✅ Bereits aktuellste Version ("+newVer+")","ok");
       } else {
-        toast("🔄 Neue Version: "+newVer+" – lade...", "ok");
-        setTimeout(()=>location.replace(fresh),800);
+        // Neue Version verfügbar: merken + neu laden (ohne URL-Änderung!)
+        try{sessionStorage.setItem("sdro_post_update",newVer);}catch{}
+        toast("🔄 Neue Version "+newVer+" wird geladen...", "ok");
+        setTimeout(()=>location.reload(true),800);
       }
     })
     .catch(()=>{
-      // Fallback: direkt laden
-      location.replace(fresh);
+      // Fallback: trotzdem neu laden
+      try{sessionStorage.setItem("sdro_post_update","neu");}catch{}
+      location.reload(true);
     });
 }
 
@@ -1379,8 +1382,14 @@ function openMedActions(medId){
 // Bild manuell suchen – immer, auch wenn schon ein Foto da ist (force=true überspringt Guards)
 async function fetchMedImageManual(medId){
   if(!apiKey||!apiKey.startsWith("sk-ant-")){toast("Bitte zuerst API-Schlüssel eingeben","warn");setView("settings");return;}
-  toast("🔍 Suche Online-Foto...","info");
-  await fetchMedImageFromWeb(medId,true);
+  const med=meds.find(m=>m.id===medId);
+  toast("🔍 Suche Online-Foto für "+(med?.name||"Medikament")+"...","info");
+  const found=await fetchMedImageFromWeb(medId,true);
+  if(found){
+    toast("✅ Online-Foto gefunden und verknüpft","ok");
+  }else{
+    toast("❌ Kein Foto gefunden – bitte Foto manuell aufnehmen","warn");
+  }
 }
 
 // Validierungsstatus zurücksetzen (Ignored → wieder prüfbar)
@@ -2315,14 +2324,14 @@ function renderSettings(){
     <!-- Benachrichtigungs-Einstellungen -->
     <div class="card" style="padding:16px;margin-bottom:10px">
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:10px">🔔 Benachrichtigungen</div>
-      ${notifRow("notifyExpiry","⏰ MHD läuft ab","Warnung wenn Haltbarkeitsdatum näher rückt")}
-      ${cfg.notifyExpiry?`<div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Benachrichtigen ab:</div>
+      ${notifRow("notifyExpiry","⏰ MHD läuft ab","Push-Benachrichtigung wenn Haltbarkeitsdatum näher rückt")}
+      <div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">⚠️ MHD-Warnung ab: (gilt für Übersicht-Farbe${cfg.notifyExpiry?" und Push-Benachrichtigung":""})</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           ${[7,14,30,60,90].map(d=>`<button onclick="cfg.mhdNotifyDays=${d};save();renderSettings();" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${cfg.mhdNotifyDays===d?"var(--accent)":"var(--border)"};background:${cfg.mhdNotifyDays===d?"var(--acclo)":"var(--surface)"};color:${cfg.mhdNotifyDays===d?"var(--accent)":"var(--text)"};font-size:12px;font-weight:${cfg.mhdNotifyDays===d?700:400};cursor:pointer">${d} Tage</button>`).join("")}
         </div>
-        <div style="font-size:10px;color:var(--muted);margin-top:6px">Banner erscheint ${cfg.mhdNotifyDays} Tage vor Ablauf</div>
-      </div>`:""}
+        <div style="font-size:10px;color:var(--muted);margin-top:6px">Rote Markierung + Banner ab ${cfg.mhdNotifyDays} Tage vor Ablauf</div>
+      </div>
       ${notifRow("notifyLowStock","📦 Fast leer Warnung","Warnung wenn Bestand unter Schwellenwert")}
       ${cfg.notifyLowStock?`<div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Warnen wenn Bestand kleiner oder gleich:</div>
@@ -2356,13 +2365,6 @@ function renderSettings(){
           })()}
         </div>
       </div>`:""}
-      <div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:4px">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">⚠️ MHD-Warnung in der Übersicht ab:</div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          ${[7,14,30,60,90].map(d=>`<button onclick="setCfg('expiryDays',${d});renderSettings();" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${cfg.expiryDays===d?"var(--amber)":"var(--border)"};background:${cfg.expiryDays===d?"var(--amberlo)":"var(--surface)"};color:${cfg.expiryDays===d?"var(--amber)":"var(--text)"};font-size:12px;font-weight:${cfg.expiryDays===d?700:400};cursor:pointer">${d} Tage</button>`).join("")}
-        </div>
-        <div style="font-size:10px;color:var(--muted);margin-top:6px">Medikament wird ${cfg.expiryDays} Tage vor Ablauf orange/rot markiert</div>
-      </div>
     </div>
     <!-- Daten-Hinweis -->
     <div class="card" style="padding:14px;margin-bottom:10px;background:var(--acclo);border:1px solid var(--accent)44">
@@ -2432,8 +2434,14 @@ async function runPZNValidationAll(){
   for(const med of toCheck){
     await new Promise(r=>setTimeout(r,600));// Rate-Limit Schutz
     const hasCamPhoto2=(med.photos||[]).some(p=>p&&p.startsWith('data:'));
-    const lblExtra=hasCamPhoto2?' 📷':'';
-    if(lblEl())lblEl().textContent=`Prüfe${lblExtra}: ${med.name}...`;
+    const hasUrlPhoto2=(med.photos||[]).some(p=>p&&p.startsWith('http'))||med.photoIsUrl;
+    const hasPZN2=!!med.pzn;
+    const checks=[
+      hasPZN2?'PZN prüfen':'PZN suchen',
+      'Name & Hersteller',
+      (!hasCamPhoto2&&!hasUrlPhoto2)?'Foto laden':'📷 Foto vorhanden',
+    ].join(' · ');
+    if(lblEl())lblEl().textContent=`🔍 ${med.name}: ${checks}…`;
     // Zuerst im Cache nachschauen
     const cached=lookupPZNInCache(med.pzn);
     if(cached){
@@ -4209,9 +4217,19 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-012 · 28.04.2026";
+window._buildTime="SaDro-013 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
+// Nach App-Update: grünen Banner anzeigen
+(()=>{
+  try{
+    const updVer=sessionStorage.getItem("sdro_post_update");
+    if(updVer){
+      sessionStorage.removeItem("sdro_post_update");
+      setTimeout(()=>toast("✅ App aktualisiert auf "+updVer,"ok"),600);
+    }
+  }catch{}
+})();
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
 setTimeout(()=>{
   const issues=meds.filter(m=>!m.expiryDate||(!m.groupId||!groups.find(g=>g.id===m.groupId)));
