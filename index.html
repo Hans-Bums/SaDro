@@ -623,15 +623,17 @@ function handleAIErr(e){
 // KI-BILD-SUCHE: Produktfoto aus dem Internet laden
 // Wird aufgerufen wenn ein Medikament ohne Foto gespeichert wurde
 // ══════════════════════════════════════════════════════════════════
-async function fetchMedImageFromWeb(medId){
+async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
   if(!med)return;
-  // Skip: bereits Web-URL als Haupt-Foto vorhanden
-  if(med.photoIsUrl&&med.photo)return;
-  // Skip: Kamera-Fotos vorhanden UND schon eine Online-URL im photos[]-Array → kein Duplikat
-  const _hasCam=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
-  const _hasUrl=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('http'));
-  if(_hasCam&&_hasUrl)return;
+  if(!force){
+    // Skip: bereits Web-URL als Haupt-Foto vorhanden
+    if(med.photoIsUrl&&med.photo)return;
+    // Skip: Kamera-Fotos vorhanden UND schon eine Online-URL im photos[]-Array → kein Duplikat
+    const _hasCam=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
+    const _hasUrl=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('http'));
+    if(_hasCam&&_hasUrl)return;
+  }
   const key=(apiKey||LS.get("sdro_k")||"").trim();
   if(!key||!key.startsWith("sk-ant-"))return;
   try{
@@ -660,21 +662,20 @@ Gib NUR die direkte Bild-URL zurück (endet auf .jpg, .jpeg, .png oder .webp). K
     if(currentMed){
       // !! Kamera-Fotos (base64) im photos[]-Array BEIBEHALTEN !!
       const keepPhotos=(currentMed.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
-      if(keepPhotos.length>0){
-        // Kamera-Fotos vorhanden: Online-URL NICHT als Haupt-Foto überschreiben!
-        // Online-URL nur als zusätzliches Foto anhängen, Kamera bleibt primär
+      if(keepPhotos.length>0&&!force){
+        // Automatisch: Kamera-Fotos vorhanden → URL nur anhängen, Kamera bleibt primär
         meds=meds.map(m=>m.id===medId?{
           ...m,
-          photoIsUrl:false,          // Kamera-Foto ist primär
-          photos:[...keepPhotos,imgUrl] // URL als letztes Foto anhängen
+          photoIsUrl:false,
+          photos:[...keepPhotos,imgUrl]
         }:m);
       }else{
-        // Kein Kamera-Foto: Online-URL als Haupt-Foto setzen
+        // Kein Kamera-Foto ODER manuell ausgelöst (force) → Online-URL als Haupt-Foto
         meds=meds.map(m=>m.id===medId?{
           ...m,
           photo:imgUrl,
           photoIsUrl:true,
-          photos:[imgUrl]
+          photos:keepPhotos.length>0?[...keepPhotos,imgUrl]:[imgUrl]
         }:m);
       }
       save();if(currentView==="list")renderList();
@@ -1327,11 +1328,11 @@ function openMedActions(medId){
     </div>`,"center-overlay",true);
 }
 
-// Bild manuell suchen (mit Token-Hinweis)
+// Bild manuell suchen – immer, auch wenn schon ein Foto da ist (force=true überspringt Guards)
 async function fetchMedImageManual(medId){
   if(!apiKey||!apiKey.startsWith("sk-ant-")){toast("Bitte zuerst API-Schlüssel eingeben","warn");setView("settings");return;}
-  toast("Suche Online-Foto...","info");
-  await fetchMedImageFromWeb(medId);
+  toast("🔍 Suche Online-Foto...","info");
+  await fetchMedImageFromWeb(medId,true);
 }
 
 // Validierungsstatus zurücksetzen (Ignored → wieder prüfbar)
@@ -1698,16 +1699,15 @@ function renderPhotoGallery(){
     <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px">
       <span style="font-size:11px;color:var(--muted)">Winkel:</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" title="-5°" style="min-width:36px">-5°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" title="-1°" style="min-width:32px">-1°</button>
-        <button class="btn btn-sm" onclick="toggleRotSign()" title="Vorzeichen umkehren" style="min-width:32px;background:var(--faint);color:var(--text);font-weight:700;font-size:14px">±</button>
-        <input type="text" inputmode="decimal" id="rot-deg-inp" value="${window._photoRot||0}"
-               style="width:64px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter')applyRotDeg()" placeholder="0"/>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" title="+1°" style="min-width:32px">+1°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" title="+5°" style="min-width:36px">+5°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()">↻ Anwenden</button>
-        <button class="btn btn-sm" onclick="applyRotDeg(-90)">↺ -90°</button>
-        <button class="btn btn-sm" onclick="applyRotDeg(90)">↻ +90°</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(-90)" style="min-width:42px">↺ -90°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" style="min-width:36px">-5°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" style="min-width:32px">-1°</button>
+        <input type="text" id="rot-deg-inp" value="${window._photoRot||0}"
+               style="width:58px;text-align:center;font-weight:700;font-size:14px" onkeydown="if(event.key==='Enter'){this.blur();applyRotDeg();}" placeholder="0"/>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" style="min-width:32px">+1°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" style="min-width:36px">+5°</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(90)" style="min-width:42px">↻ +90°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()" style="min-width:80px">↻ Anwenden</button>
       </div>
     </div>
     <!-- Foto mit Dreh-Griff (wie Word/PowerPoint) -->
@@ -1730,6 +1730,7 @@ function renderPhotoGallery(){
       ${idx>0?`<button class="btn btn-sm" onclick="window._photoIdx--;window._photoRot=0;renderPhotoGallery()">← Zurück</button>`:""}
       ${idx<total-1?`<button class="btn btn-sm" onclick="window._photoIdx++;window._photoRot=0;renderPhotoGallery()">Weiter →</button>`:""}
       <button class="btn btn-sm btn-ghost" onclick="cropPhotoUI()">✂️ Zuschneiden</button>
+      <button class="btn btn-sm" style="background:var(--acclo);color:var(--accent)" onclick="fetchMedImageManual('${medId}')">📸 Online-Foto</button>
       <button class="btn btn-danger btn-sm" onclick="deleteCurrentPhoto()">🗑️ Löschen</button>
     </div>
     <div style="display:flex;gap:8px">
@@ -4133,7 +4134,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-008 · 28.04.2026";
+window._buildTime="SaDro-009 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
