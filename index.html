@@ -1310,6 +1310,8 @@ function openMedActions(medId){
   const med=meds.find(m=>m.id===medId);if(!med)return;
   const hasKey=apiKey&&apiKey.startsWith("sk-ant-");
   const st=med.pznStatus;
+  // Foto-Suche zeigen wenn kein Kamera-Foto vorhanden (auch wenn URL-Foto kaputt)
+  const hasCamPhoto=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
   const statusText=st==="ok"?`✅ Geprüft am ${med.pznChecked||"?"}`
     :st==="conflict"?"⚠️ Unstimmigkeit festgestellt"
     :st==="ignored"?"🚫 Prüfung deaktiviert"
@@ -1321,7 +1323,7 @@ function openMedActions(medId){
     <div style="display:flex;flex-direction:column;gap:8px">
       ${med.pzn?`<button class="btn btn-ghost btn-full" onclick="closeModal();singleValidate('${medId}')">🔍 PZN jetzt prüfen <span style="font-size:10px;color:var(--muted)">(1 API-Call)</span></button>`
         :`<button class="btn btn-ghost btn-full" onclick="closeModal();singleFindPZN('${medId}')">🔍 PZN automatisch suchen <span style="font-size:10px;color:var(--muted)">(1 API-Call)</span></button>`}
-      ${!med.photo?`<button class="btn btn-full" style="background:var(--acclo);color:var(--accent)" onclick="closeModal();fetchMedImageManual('${medId}')">📸 Online-Foto suchen <span style="font-size:10px;color:var(--muted)">(1 API-Call)</span></button>`:""}
+      ${!hasCamPhoto?`<button class="btn btn-full" style="background:var(--acclo);color:var(--accent)" onclick="closeModal();fetchMedImageManual('${medId}')">📸 Online-Foto suchen <span style="font-size:10px;color:var(--muted)">(1 API-Call)</span></button>`:""}
       ${st==="conflict"?`<button class="btn btn-full" style="background:var(--amberlo);color:var(--amber)" onclick="closeModal();resetMedValidation('${medId}')">🔄 Ignorierung aufheben</button>`:""}
       ${!hasKey?`<div class="alert alert-amber" style="margin-top:4px">⚠️ Kein API-Schlüssel – bitte in Einstellungen eingeben</div>`:""}
       <button class="btn btn-full" onclick="closeModal()">Schließen</button>
@@ -1699,15 +1701,16 @@ function renderPhotoGallery(){
     <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px">
       <span style="font-size:11px;color:var(--muted)">Winkel:</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="applyRotDeg(-90)" style="min-width:42px">↺ -90°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" style="min-width:36px">-5°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" style="min-width:32px">-1°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-5)" title="-5°" style="min-width:36px">-5°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(-1)" title="-1°" style="min-width:32px">-1°</button>
+        <button class="btn btn-sm" onclick="toggleRotSign()" title="Vorzeichen umkehren" style="min-width:32px;background:var(--faint);color:var(--text);font-weight:700;font-size:14px">±</button>
         <input type="text" id="rot-deg-inp" value="${window._photoRot||0}"
-               style="width:58px;text-align:center;font-weight:700;font-size:14px" onkeydown="if(event.key==='Enter'){this.blur();applyRotDeg();}" placeholder="0"/>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" style="min-width:32px">+1°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" style="min-width:36px">+5°</button>
-        <button class="btn btn-sm" onclick="applyRotDeg(90)" style="min-width:42px">↻ +90°</button>
-        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()" style="min-width:80px">↻ Anwenden</button>
+               style="width:64px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter')applyRotDeg()" placeholder="0"/>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(1)" title="+1°" style="min-width:32px">+1°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg(5)" title="+5°" style="min-width:36px">+5°</button>
+        <button class="btn btn-sm btn-ghost" onclick="applyRotDeg()">↻ Anwenden</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(-90)">↺ -90°</button>
+        <button class="btn btn-sm" onclick="applyRotDeg(90)">↻ +90°</button>
       </div>
     </div>
     <!-- Foto mit Dreh-Griff (wie Word/PowerPoint) -->
@@ -1730,7 +1733,6 @@ function renderPhotoGallery(){
       ${idx>0?`<button class="btn btn-sm" onclick="window._photoIdx--;window._photoRot=0;renderPhotoGallery()">← Zurück</button>`:""}
       ${idx<total-1?`<button class="btn btn-sm" onclick="window._photoIdx++;window._photoRot=0;renderPhotoGallery()">Weiter →</button>`:""}
       <button class="btn btn-sm btn-ghost" onclick="cropPhotoUI()">✂️ Zuschneiden</button>
-      <button class="btn btn-sm" style="background:var(--acclo);color:var(--accent)" onclick="fetchMedImageManual('${medId}')">📸 Online-Foto</button>
       <button class="btn btn-danger btn-sm" onclick="deleteCurrentPhoto()">🗑️ Löschen</button>
     </div>
     <div style="display:flex;gap:8px">
@@ -2348,9 +2350,9 @@ async function runPZNValidationAll(){
     if(barEl())barEl().style.width=pct+"%";
     if(lblEl())lblEl().textContent=`${done} / ${total} geprüft`;
     if(resultsEl()){
-      const icon=status==="ok"?"✅":status==="conflict"?"⚠️":status==="cached"?"💾":"❓";
-      const color=status==="ok"?"var(--green)":status==="conflict"?"var(--amber)":"var(--muted)";
-      const lbl=status==="ok"?"OK":status==="conflict"?"Unstimmigkeit":status==="cached"?"Aus Cache":"Keine Daten";
+      const icon=(status==="ok"||status==="cached")?"✅":status==="conflict"?"⚠️":"❓";
+      const color=(status==="ok"||status==="cached")?"var(--green)":status==="conflict"?"var(--amber)":"var(--muted)";
+      const lbl=status==="ok"?"OK":status==="conflict"?"Unstimmigkeit":status==="cached"?"OK":"Keine Daten";
       resultsEl().innerHTML+=`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><span>${icon}</span><span style="flex:1;font-weight:500">${h(name)}</span><span style="color:${color};font-size:10px;font-weight:600">${lbl}</span></div>`;
       resultsEl().scrollTop=resultsEl().scrollHeight;
     }
@@ -2375,6 +2377,10 @@ async function runPZNValidationAll(){
       if(status==="cached"){
         meds=meds.map(m=>m.id===med.id?{...m,pznStatus:"ok",pznChecked:td()}:m);
         save();
+        // Bild laden falls noch keines vorhanden (auch bei Cache-Treffer!)
+        const mNow=meds.find(m=>m.id===med.id);
+        if(mNow&&!mNow.photoIsUrl&&!mNow.photo&&apiKey&&apiKey.startsWith("sk-ant-"))
+          setTimeout(()=>fetchMedImageFromWeb(med.id),800);
       }
       updateProgress(med.name,status);
       await new Promise(r=>setTimeout(r,100)); // Kurze Pause für UI-Update
@@ -4134,7 +4140,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-009 · 28.04.2026";
+window._buildTime="SaDro-010 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
