@@ -453,9 +453,10 @@ const DEF_MEDS=[
 let favs   = LS.get("sdro_favs") || [];
 let groups = LS.get("sdro_g")    || JSON.parse(JSON.stringify(DEF_GROUPS));
 let meds   = LS.get("sdro_m")    || JSON.parse(JSON.stringify(DEF_MEDS));
-let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30,lowStockCount:1,lowStockUnit:"Packung"};
+let cfg    = LS.get("sdro_c")    || {theme:"auto",notifyExpiry:false,notifyLowStock:false,expiryDays:30,mhdNotifyDays:14,lowStockCount:1,lowStockUnit:"Packung"};
 if(!cfg.lowStockCount)cfg.lowStockCount=1;
 if(!cfg.lowStockUnit)cfg.lowStockUnit="Packung";
+if(!cfg.mhdNotifyDays)cfg.mhdNotifyDays=14;
 let apiKey = LS.get("sdro_k")    || "";
 
 // ── Favoriten-Verwaltung ──
@@ -507,6 +508,14 @@ function fmtDate(s){return s?new Date(s).toLocaleDateString("de-DE",{day:"2-digi
 
 // Tage bis Ablaufdatum berechnen
 function daysLeft(s){return s?(new Date(s)-new Date())/864e5:null;}
+
+// Bestes verfügbares Foto: Kamera-DataURL > med.photo > erste HTTP-URL in photos[]
+function getDisplayPhoto(med){
+  const cam=(med.photos||[]).find(p=>p&&typeof p==='string'&&p.startsWith('data:'));
+  if(cam)return cam;
+  if(med.photo)return med.photo;
+  return(med.photos||[]).find(p=>p&&typeof p==='string'&&p.startsWith('http'))||null;
+}
 
 // Ablauf-Informationen für Farbgebung und Anzeige
 function expInfo(s){
@@ -1559,7 +1568,7 @@ function _thumbImgErr(img,medId,emoji){
 
 function renderList(){
   const el=document.getElementById("view-list");
-  const soon=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<cfg.expiryDays;});
+  const soon=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<(cfg.mhdNotifyDays||14);});
   const lowSt=meds.filter(m=>isLowStock(m));
   let html="";
 
@@ -1614,11 +1623,12 @@ function renderList(){
         const expLine=med.expiryDate
           ?`<span style="font-size:10px;color:${exp?.urgent?exp.col:"var(--muted)"}">⏰ ${fmtDate(med.expiryDate)}</span>`
           :`<span style="font-size:10px;color:var(--red)">⏰ kein MHD</span>`;
-        // Thumbnail: schwarzer Hintergrund wenn Bild kleiner als Rahmen; onerror → Platzhalter
-        const thumbHtml=med.photo
-          ?`<img src="${med.photo}" onclick="showPhotoModal('${med.id}')"
+        // Thumbnail: Kamera-Foto bevorzugen; onerror → Platzhalter
+        const _dp=getDisplayPhoto(med);
+        const thumbHtml=_dp
+          ?`<img src="${_dp}" onclick="showPhotoModal('${med.id}')"
               onerror="_thumbImgErr(this,'${med.id}','${g.emoji}')"
-              style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:contain;border:2px solid var(--border);background:#111;flex-shrink:0"/>`
+              style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:cover;border:2px solid var(--border);background:#111;flex-shrink:0"/>`
           :`<div class="med-thumb" onclick="openMedActions('${med.id}')" style="cursor:pointer;border:2px dashed var(--border);position:relative" title="Kein Foto – klicken für Optionen">
               <span style="font-size:24px">${g.emoji}</span>
               <div style="position:absolute;bottom:2px;right:2px;background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700">+</div>
@@ -2002,17 +2012,29 @@ NUR JSON: {"isMedical":true,"results":[{"name":"exakter Name","reason":"med. Beg
     if(!found.length){html+=`<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">Keine passenden Medikamente in deinem Bestand gefunden.</div>`;el.innerHTML=html;return;}
     found.forEach(m=>{
       const g=groups.find(x=>x.id===m.groupId);
-      const thumb=m.photo?`<div class="med-thumb" style="width:auto"><img src="${m.photo}" alt="" style="width:72px;height:72px;border-radius:10px;object-fit:contain;background:#000"/></div>`:g?`<div class="med-thumb">${h(g.emoji)}</div>`:`<div class="med-thumb">💊</div>`;
+      const _sdp=getDisplayPhoto(m);
+      const thumb=_sdp
+        ?`<img src="${_sdp}" alt="" style="width:72px;height:72px;border-radius:10px;object-fit:cover;background:#111;flex-shrink:0" onerror="this.style.display='none'"/>`
+        :g?`<div class="med-thumb">${h(g.emoji)}</div>`:`<div class="med-thumb">💊</div>`;
       const empty=m.count===0&&(m.totalPills===0||m.totalPills==null);
+      const realTotal=m.totalPills!=null?m.totalPills:(m.pillsPerBlister&&m.count?m.count*m.pillsPerBlister:null);
+      const expS=expInfo(m.expiryDate);
+      const expiryStr=m.expiryDate
+        ?`<span style="font-size:10px;color:${expS?.urgent?"var(--red)":"var(--muted)"}">⏰ ${fmtDate(m.expiryDate)}</span>`
+        :`<span style="font-size:10px;color:var(--red)">⏰ kein MHD</span>`;
       html+=`<div class="card fade" style="padding:13px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start">
         ${thumb}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:14px;margin-bottom:3px">${h(m.name)}</div>
-          ${m.pzn?`<div style="font-size:10px;color:var(--muted);font-family:monospace;margin-bottom:3px">PZN ${h(m.pzn)}</div>`:""}
-          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${h(m.reason||"")}</div>
-          <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+          <div style="font-weight:600;font-size:14px;margin-bottom:2px">${h(m.name)}${m.strength?` <span style="font-size:11px;color:var(--muted);font-weight:400">${h(m.strength)}</span>`:""}</div>
+          ${m.pzn?`<div style="font-size:10px;color:var(--muted);font-family:monospace;margin-bottom:2px">PZN ${h(m.pzn)}</div>`:""}
+          <div style="font-size:11px;color:var(--muted);margin-bottom:5px">${h(m.reason||"")}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:5px">
             ${g?pill(`${h(g.emoji)} ${h(g.name)}`,g.color,g.color+"18"):""}
             ${empty?pill("LEER","var(--red)","var(--redlo)"):pill(`${m.count} ${m.unit}`,"var(--muted)","var(--faint)")}
+            ${realTotal&&!empty?`<span style="font-size:10px;color:var(--accent);font-weight:600">${realTotal} ${m.pillUnit||"Stk"}</span>`:""}
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            ${expiryStr}
             ${!empty?`<button onclick="closeModal&&closeModal();openEntModalFor('${m.id}')" style="border:none;background:var(--red);color:#fff;border-radius:6px;padding:3px 9px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0">📤 Entnehmen</button>`:""}
           </div>
         </div>
@@ -2182,6 +2204,9 @@ function renderSettings(){
         <button class="btn btn-primary btn-sm" style="flex:2" onclick="runPZNValidationAll()">🔍 Alle ${meds.length} Medikamente prüfen</button>
         ${skipCount>0?`<button class="btn btn-sm" style="flex:1;background:var(--amberlo);color:var(--amber)" onclick="clearSkipValidation()">🔄 ${skipCount} Ignoriert</button>`:""}
       </div>
+      <div style="margin-top:8px">
+        <button class="btn btn-sm btn-ghost btn-full" onclick="startPZNDownload()">⬇️ PZN-Liste herunterladen</button>
+      </div>
     </div>
     <!-- Gruppen-Verwaltung als Button -->
     <div class="card" style="padding:14px;margin-bottom:10px">
@@ -2253,8 +2278,15 @@ function renderSettings(){
     <!-- Benachrichtigungs-Einstellungen -->
     <div class="card" style="padding:16px;margin-bottom:10px">
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:10px">🔔 Benachrichtigungen</div>
-      ${notifRow("notifyExpiry","MHD läuft ab","Warnung bei ablaufenden Medikamenten")}
-      ${notifRow("notifyLowStock","Fast leer Warnung","Warnung wenn Bestand unter Schwellenwert")}
+      ${notifRow("notifyExpiry","⏰ MHD läuft ab","Warnung wenn Haltbarkeitsdatum näher rückt")}
+      ${cfg.notifyExpiry?`<div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Benachrichtigen ab:</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${[7,14,30,60,90].map(d=>`<button onclick="cfg.mhdNotifyDays=${d};save();renderSettings();" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${cfg.mhdNotifyDays===d?"var(--accent)":"var(--border)"};background:${cfg.mhdNotifyDays===d?"var(--acclo)":"var(--surface)"};color:${cfg.mhdNotifyDays===d?"var(--accent)":"var(--text)"};font-size:12px;font-weight:${cfg.mhdNotifyDays===d?700:400};cursor:pointer">${d} Tage</button>`).join("")}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px">Banner erscheint ${cfg.mhdNotifyDays} Tage vor Ablauf</div>
+      </div>`:""}
+      ${notifRow("notifyLowStock","📦 Fast leer Warnung","Warnung wenn Bestand unter Schwellenwert")}
       ${cfg.notifyLowStock?`<div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:-8px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Warnen wenn Bestand kleiner oder gleich:</div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
@@ -2287,12 +2319,12 @@ function renderSettings(){
           })()}
         </div>
       </div>`:""}
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-        <span style="font-size:12px;color:var(--muted)">Warnung ab</span>
-        <select style="width:auto" onchange="setCfg('expiryDays',parseInt(this.value))">
-          ${[7,14,30,60,90].map(d=>`<option value="${d}" ${cfg.expiryDays===d?"selected":""}>${d} Tage</option>`).join("")}
-        </select>
-        <span style="font-size:12px;color:var(--muted)">vor Ablauf</span>
+      <div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-top:4px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">⚠️ MHD-Warnung in der Übersicht ab:</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          ${[7,14,30,60,90].map(d=>`<button onclick="setCfg('expiryDays',${d});renderSettings();" style="padding:5px 10px;border-radius:20px;border:1.5px solid ${cfg.expiryDays===d?"var(--amber)":"var(--border)"};background:${cfg.expiryDays===d?"var(--amberlo)":"var(--surface)"};color:${cfg.expiryDays===d?"var(--amber)":"var(--text)"};font-size:12px;font-weight:${cfg.expiryDays===d?700:400};cursor:pointer">${d} Tage</button>`).join("")}
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:6px">Medikament wird ${cfg.expiryDays} Tage vor Ablauf orange/rot markiert</div>
       </div>
     </div>
     <!-- Daten-Hinweis -->
@@ -4140,7 +4172,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-010 · 28.04.2026";
+window._buildTime="SaDro-011 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
