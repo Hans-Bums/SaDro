@@ -630,66 +630,103 @@ function handleAIErr(e){
 
 // ══════════════════════════════════════════════════════════════════
 // KI-BILD-SUCHE: Produktfoto aus dem Internet laden
-// Wird aufgerufen wenn ein Medikament ohne Foto gespeichert wurde
+// Phase 1: PZN-basierte CDN-Muster (kostenlos, kein API-Call)
+// Phase 2: Claude web_search mit besserem Prompt (1 API-Call)
+// Phase 3: Validierung – URL wird mit Image() getestet vor dem Speichern
 // ══════════════════════════════════════════════════════════════════
+
+// Prüft ob eine URL wirklich ein ladbares Bild ist (kein HTML/404)
+async function _imgLoads(url,timeout=4000){
+  return new Promise(res=>{
+    const img=new Image();
+    const t=setTimeout(()=>{img.src="";res(false);},timeout);
+    img.onload=()=>{clearTimeout(t);res(true);};
+    img.onerror=()=>{clearTimeout(t);res(false);};
+    img.src=url;
+  });
+}
+
+// Phase 1: Bekannte CDN-Muster für deutsche Apotheken mit PZN ausprobieren
+async function _tryPZNCDNPatterns(pzn){
+  const p=pzn.replace(/\D/g,"").padStart(8,"0");
+  const patterns=[
+    // shop-apotheke.com CDN
+    `https://media.shop-apotheke.com/pimage/${p}-1.jpg`,
+    `https://media.shop-apotheke.com/pimage/${p}.jpg`,
+    // DocMorris / ZurRose
+    `https://img.docmorris.de/product/${p}.jpg`,
+    `https://image.docmorris.de/images/products/${p}/big.jpg`,
+    // aponeo.de
+    `https://cdn.aponeo.de/product-images/pzn-${p}.jpg`,
+    `https://cdn.aponeo.de/product-images/${p}_1.jpg`,
+    // mein-apothekenmanager
+    `https://www.apotheken-umschau.de/img/pzn/${p}.jpg`,
+  ];
+  for(const url of patterns){
+    if(await _imgLoads(url,3000))return url;
+  }
+  return null;
+}
+
+// Gefundene URL ins Med-Objekt speichern
+function _applyMedPhoto(medId,imgUrl,force){
+  const m=meds.find(x=>x.id===medId);if(!m)return;
+  const keep=(m.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
+  if(keep.length>0&&!force){
+    meds=meds.map(x=>x.id===medId?{...x,photoIsUrl:false,photos:[...keep,imgUrl]}:x);
+  }else{
+    meds=meds.map(x=>x.id===medId?{...x,photo:imgUrl,photoIsUrl:true,photos:keep.length>0?[...keep,imgUrl]:[imgUrl]}:x);
+  }
+  save();if(currentView==="list")renderList();
+  toast("📸 Online-Foto für "+m.name+" verknüpft","ok");
+}
+
 async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
   if(!med)return;
   if(!force){
-    // Skip: bereits Web-URL als Haupt-Foto vorhanden
     if(med.photoIsUrl&&med.photo)return;
-    // Skip: Kamera-Fotos vorhanden UND schon eine Online-URL im photos[]-Array → kein Duplikat
     const _hasCam=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
     const _hasUrl=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('http'));
     if(_hasCam&&_hasUrl)return;
   }
   const key=(apiKey||LS.get("sdro_k")||"").trim();
+
+  // ── Phase 1: PZN-CDN-Muster (kostenlos, kein API-Call) ──────────
+  if(med.pzn){
+    const cdnUrl=await _tryPZNCDNPatterns(med.pzn);
+    if(cdnUrl){_applyMedPhoto(medId,cdnUrl,force);return;}
+  }
+
+  // ── Phase 2: Claude web_search ───────────────────────────────────
   if(!key||!key.startsWith("sk-ant-"))return;
   try{
-    // KI mit Websuche nach Produktbild-URL fragen
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-haiku-4-5-20251001",max_tokens:400,
         tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Suche das Produktfoto der deutschen Medikamentenverpackung "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" von "+med.manufacturer:""}.
-Suche auf shop-apotheke.com, aponeo.de, docmorris.de oder buendnis-fuer-verbesserungen.de.
-Gib NUR die direkte Bild-URL zurück (endet auf .jpg, .jpeg, .png oder .webp). Keine Produktseiten-URL, kein Text, kein Markdown, nur die Bild-URL selbst.`}]
+        messages:[{role:"user",content:`Suche die Produktseite für das deutsche Medikament "${med.name}"${med.pzn?" PZN "+med.pzn:""}${med.manufacturer?" von "+med.manufacturer:""} auf shop-apotheke.com oder aponeo.de.
+Öffne die Produktseite und gib mir den Inhalt des og:image Meta-Tags ODER die erste direkte Bild-URL (.jpg/.jpeg/.png/.webp) die du auf der Seite findest.
+Antworte NUR mit der URL – kein Text, kein Markdown, keine Erklärung.`}]
       })
     });
     if(!r.ok)return;
     const resp=await r.json();
     const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join("").trim();
-    // URL aus Antwort extrahieren
-    const urlMatch=text.match(/https?:\/\/\S+\.(?:jpg|jpeg|png|webp)(?:\?\S*)?/i)||text.match(/https?:\/\/\S{20,}/);
-    if(!urlMatch)return;
-    const imgUrl=urlMatch[0].replace(/[.,;)]+$/,"");
-    if(!imgUrl.startsWith("http"))return;
-    // URL direkt speichern — kein fetch nötig, <img src> funktioniert ohne CORS
-    const currentMed=meds.find(m=>m.id===medId);
-    if(currentMed){
-      // !! Kamera-Fotos (base64) im photos[]-Array BEIBEHALTEN !!
-      const keepPhotos=(currentMed.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
-      if(keepPhotos.length>0&&!force){
-        // Automatisch: Kamera-Fotos vorhanden → URL nur anhängen, Kamera bleibt primär
-        meds=meds.map(m=>m.id===medId?{
-          ...m,
-          photoIsUrl:false,
-          photos:[...keepPhotos,imgUrl]
-        }:m);
-      }else{
-        // Kein Kamera-Foto ODER manuell ausgelöst (force) → Online-URL als Haupt-Foto
-        meds=meds.map(m=>m.id===medId?{
-          ...m,
-          photo:imgUrl,
-          photoIsUrl:true,
-          photos:keepPhotos.length>0?[...keepPhotos,imgUrl]:[imgUrl]
-        }:m);
-      }
-      save();if(currentView==="list")renderList();
-      toast("📸 Online-Foto für "+med.name+" verknüpft","ok");
-    }
+
+    // Nur direkte Bild-URLs akzeptieren (mit Bild-Extension oder CDN-Domains)
+    const byExt=text.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>]*)?/i);
+    const byCDN=text.match(/https?:\/\/(?:media|cdn|img|image|images|static|assets)\.[^\s"'<>]{15,}/i);
+    const rawUrl=(byExt?.[0]||byCDN?.[0]||"").replace(/[.,;)>]+$/,"");
+    if(!rawUrl||!rawUrl.startsWith("http"))return;
+
+    // ── Phase 3: URL validieren – lädt sie wirklich? ────────────────
+    const valid=await _imgLoads(rawUrl,5000);
+    if(!valid){console.warn("fetchMedImageFromWeb: URL lädt nicht:",rawUrl);return;}
+
+    _applyMedPhoto(medId,rawUrl,force);
   }catch(e){console.warn("fetchMedImageFromWeb:",e);}
 }
 
@@ -4172,7 +4209,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-011 · 28.04.2026";
+window._buildTime="SaDro-012 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // 2 Sekunden nach Start: Unvollständige Daten prüfen
