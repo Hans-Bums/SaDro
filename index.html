@@ -680,15 +680,64 @@ function _applyMedPhoto(medId,imgUrl,force,silent=false){
   if(!silent)toast("📸 Foto für "+m.name+" verknüpft","ok");
 }
 
-// ── Phase 1: Wikipedia/Wikimedia API (CORS-frei, kein API-Key) ────
-async function _tryWikipedia(name){
-  // Wirkstoffname: erstes oder erstes+zweites Wort (z.B. "Sertralin", "Naratriptan")
+// ── Chemische Strukturformeln erkennen (Hexagon-Muster = ausschließen) ──
+// Diese URLs zeigen Moleküle, keine Verpackungen → immer ablehnen
+const _STRUCT_RE=/struktur|structure|formula|molecule|skelett|synthes|crystal|isomer|stereo|chemica|\.svg|hexagon|benzol|ring_/i;
+// Verpackungsbezogene Begriffe → bevorzugen
+const _PACK_RE=/packung|package|pack[^a]|tablette|kapsel|blister|dose|flasche|tube|ampulle|film|dragee|pille|spray|gel|salbe|cream|box|karton/i;
+
+// ── Phase 1a: Wikimedia Commons Search API (CORS-frei, kein API-Key) ─
+// Sucht nach echten Packungsfotos in Wikimedia Commons
+async function _tryWikimediaCommons(name){
   const words=name.trim().split(/\s+/);
-  const candidates=[
-    words[0],                    // "Sertralin"
-    words.slice(0,2).join(' '),  // "Sertralin Basics"
-    name.trim(),                 // ganzer Name
-  ].filter((v,i,a)=>a.indexOf(v)===i); // unique
+  const base=words.slice(0,2).join(' ');
+  // Suchbegriffe: Wirkstoff + Packungsbegriffe
+  const searchTerms=[
+    base+' Packung',
+    base+' package',
+    base+' Tabletten',
+    base+' Filmtabletten',
+    base,
+    words[0]+' Packung',
+    words[0],
+  ].filter((v,i,a)=>a.indexOf(v)===i);
+
+  for(const term of searchTerms){
+    try{
+      const apiUrl='https://commons.wikimedia.org/w/api.php?action=query'
+        +'&generator=search&gsrnamespace=6&gsrsearch='+encodeURIComponent(term)
+        +'&prop=imageinfo&iiprop=url&format=json&origin=*&gsrlimit=15';
+      const r=await fetch(apiUrl,{headers:{'Accept':'application/json'}});
+      if(!r.ok)continue;
+      const d=await r.json();
+      const pages=Object.values(d.query?.pages||{});
+      if(!pages.length)continue;
+
+      // Struktur-SVG/Moleküle rausfiltern, Packungsfotos bevorzugen
+      const valid=pages
+        .filter(p=>p.imageinfo?.[0]?.url)
+        .map(p=>({url:p.imageinfo[0].url,title:(p.title||'').toLowerCase()}))
+        .filter(({url,title})=>!_STRUCT_RE.test(url)&&!_STRUCT_RE.test(title))
+        .sort((a,b)=>{
+          // Packungsbegriffe im Dateinamen → nach oben sortieren
+          const aP=_PACK_RE.test(a.url)||_PACK_RE.test(a.title)?0:1;
+          const bP=_PACK_RE.test(b.url)||_PACK_RE.test(b.title)?0:1;
+          return aP-bP;
+        });
+
+      for(const {url} of valid){
+        if(await _imgLoads(url,6000))return url;
+      }
+    }catch{}
+  }
+  return null;
+}
+
+// ── Phase 1b: Wikipedia Summary API – NUR wenn kein Strukturbild ────
+// Wikipedia-Thumbnails von Medikamenten sind oft Moleküldiagramme → filtern!
+async function _tryWikipedia(name){
+  const words=name.trim().split(/\s+/);
+  const candidates=[words[0], words.slice(0,2).join(' ')].filter((v,i,a)=>a.indexOf(v)===i);
 
   for(const term of candidates){
     for(const lang of['de','en']){
@@ -700,8 +749,12 @@ async function _tryWikipedia(name){
         if(!r.ok)continue;
         const d=await r.json();
         if(!d.thumbnail?.source)continue;
-        // Größeres Bild anfordern
-        const url=d.thumbnail.source.replace(/\/\d+px-/,'/400px-');
+        const rawUrl=d.thumbnail.source;
+        // Chemische Strukturbilder ausschließen (Hexagon-Muster etc.)
+        if(_STRUCT_RE.test(rawUrl))continue;
+        // Nur Fotos (JPG/JPEG/PNG/WEBP) – keine SVG-Vektorgrafiken
+        if(/\.svg/i.test(rawUrl))continue;
+        const url=rawUrl.replace(/\/\d+px-/,'/400px-');
         if(await _imgLoads(url,5000))return url;
       }catch{}
     }
@@ -709,18 +762,20 @@ async function _tryWikipedia(name){
   return null;
 }
 
-// ── Phase 2: Claude web_search → direkte Bild-URL ─────────────────
+// ── Phase 2: Claude web_search – gezielt nach Packungsfoto ───────────
 async function _claudeImageSearch(name,pzn,manufacturer,key){
-  // Suche-Formulierung: aktiver Wirkstoff + evtl. PZN
-  const term=`${name}${pzn?' '+pzn:''}${manufacturer?' '+manufacturer:''}`;
-  const prompt=`Find a product image URL for the German medication: ${term}
+  const nameBase=name.trim().split(/\s+/).slice(0,2).join(' ');
+  const prompt=`Search for a PHOTO of the physical medication PACKAGING (box/carton/bottle) for: "${name}"${pzn?' (PZN: '+pzn+')':''}.
 
-Search for "${name} Packung Foto" OR "${name} medication package photo".
-Look through search results for a DIRECT image URL (ending in .jpg, .jpeg, .png, or .webp).
-Also try: site:upload.wikimedia.org "${name}"
+IMPORTANT:
+- I need a photo of the actual package/box/bottle, NOT a chemical structure diagram or molecular formula
+- Search: "${nameBase} Packungsfoto" OR "${nameBase} medication package photo"
+- Try Wikimedia Commons: site:commons.wikimedia.org "${nameBase}" packung
+- Try: site:upload.wikimedia.org "${nameBase}"
+- Only return image URLs ending in .jpg, .jpeg, .png, or .webp (NOT .svg)
+- Reject any URL containing: struktur, structure, formula, molecule, skelett, chemical
 
-Return ONLY the raw image URL - no explanation, no markdown, just the URL.
-Example valid response: https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/photo.jpg/400px-photo.jpg`;
+Return ONLY the direct image URL. No markdown, no explanation. Just the URL.`;
 
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -738,7 +793,9 @@ Example valid response: https://upload.wikimedia.org/wikipedia/commons/thumb/a/a
     const resp=await r.json();
     const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join(" ").trim();
     if(!text)return null;
-    const urls=_extractUrls(text);
+    const urls=_extractUrls(text)
+      .filter(u=>!_STRUCT_RE.test(u))   // Strukturbilder rauswerfen
+      .filter(u=>!/\.svg/i.test(u));     // SVG rauswerfen
     for(const url of urls){
       if(await _imgLoads(url,6000))return url;
     }
@@ -762,7 +819,13 @@ async function fetchMedImageFromWeb(medId,force=false){
   const pzn=med.pzn||"";
   const manufacturer=med.manufacturer||"";
 
-  // ── Phase 1: Wikipedia (kostenlos, kein API-Key) ──────────────────
+  // ── Phase 1a: Wikimedia Commons (Packungsfotos bevorzugt) ────────
+  try{
+    const commonsUrl=await _tryWikimediaCommons(name);
+    if(commonsUrl){_applyMedPhoto(medId,commonsUrl,force,force);return true;}
+  }catch{}
+
+  // ── Phase 1b: Wikipedia (nur wenn kein Strukturbild) ─────────────
   try{
     const wikiUrl=await _tryWikipedia(name);
     if(wikiUrl){_applyMedPhoto(medId,wikiUrl,force,force);return true;}
@@ -4363,7 +4426,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-016 · 28.04.2026";
+window._buildTime="SaDro-016 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
