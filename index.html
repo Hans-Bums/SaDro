@@ -509,11 +509,14 @@ function fmtDate(s){return s?new Date(s).toLocaleDateString("de-DE",{day:"2-digi
 // Tage bis Ablaufdatum berechnen
 function daysLeft(s){return s?(new Date(s)-new Date())/864e5:null;}
 
-// Bestes verfügbares Foto: Kamera-DataURL > med.photo > erste HTTP-URL in photos[]
+// Hauptfoto (★) hat immer Vorrang – dann Fallback auf erstes Kamera-/Online-Foto
 function getDisplayPhoto(med){
+  // med.photo = das mit Stern markierte Foto (kann data: oder http sein)
+  if(med.photo)return med.photo;
+  // Fallback: irgendein Kamera-Foto
   const cam=(med.photos||[]).find(p=>p&&typeof p==='string'&&p.startsWith('data:'));
   if(cam)return cam;
-  if(med.photo)return med.photo;
+  // Fallback: irgendeine Online-URL
   return(med.photos||[]).find(p=>p&&typeof p==='string'&&p.startsWith('http'))||null;
 }
 
@@ -632,16 +635,15 @@ function handleAIErr(e){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// KI-BILD-SUCHE: Produktfoto aus dem Internet laden
-// Strategie: Claude web_search sucht og:image von Produktseite
-// Validierung: Image()-Test vor dem Speichern
+// KI-BILD-SUCHE: Produktfoto laden
+// Phase 1: Wikipedia/Wikimedia API (kostenlos, kein API-Key)
+// Phase 2: Claude web_search (1 API-Call)
 // ══════════════════════════════════════════════════════════════════
 
-// Prüft ob eine URL wirklich ein ladbares Bild liefert (kein HTML/404)
+// Prüft ob eine URL wirklich ein ladbares Bild liefert
 async function _imgLoads(url,timeout=5000){
   return new Promise(res=>{
     const img=new Image();
-    img.crossOrigin="anonymous";
     const t=setTimeout(()=>{img.src="";res(false);},timeout);
     img.onload=()=>{clearTimeout(t);res(img.naturalWidth>0);};
     img.onerror=()=>{clearTimeout(t);res(false);};
@@ -649,15 +651,14 @@ async function _imgLoads(url,timeout=5000){
   });
 }
 
-// Alle http(s)-URLs aus einem Text extrahieren und deduplizieren
+// http(s)-URLs aus Text extrahieren und deduplizieren
 function _extractUrls(text){
-  const seen=new Set();
-  const results=[];
-  // Bild-Extension am Ende (jpg/jpeg/png/webp/gif)
-  const re1=/https?:\/\/[^\s"'<>()\[\]]+\.(?:jpg|jpeg|png|webp|gif)(?:[?#][^\s"'<>()\[\]]*)?/gi;
-  // CDN-Domains auch ohne Extension
-  const re2=/https?:\/\/(?:cdn|media|img|images|static|assets|pimage|content|picture)[^\s"'<>()\[\]]{8,}/gi;
-  for(const re of[re1,re2]){
+  const seen=new Set(),results=[];
+  const patterns=[
+    /https?:\/\/[^\s"'<>()\[\]]+\.(?:jpg|jpeg|png|webp|gif)(?:[?#][^\s"'<>()\[\]]*)?/gi,
+    /https?:\/\/(?:cdn|media|img|images|static|assets|upload|commons)[^\s"'<>()\[\]]{10,}/gi,
+  ];
+  for(const re of patterns){
     for(const m of text.matchAll(re)){
       const u=m[0].replace(/[.,;:)>\]'"]+$/,"");
       if(u.startsWith("http")&&!seen.has(u)){seen.add(u);results.push(u);}
@@ -666,7 +667,7 @@ function _extractUrls(text){
   return results;
 }
 
-// Gefundene URL ins Med-Objekt speichern (silent=true: kein Toast – Aufrufer zeigt eigenen)
+// Gefundene URL speichern (silent=true → Aufrufer zeigt eigenen Toast)
 function _applyMedPhoto(medId,imgUrl,force,silent=false){
   const m=meds.find(x=>x.id===medId);if(!m)return;
   const keep=(m.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
@@ -679,28 +680,69 @@ function _applyMedPhoto(medId,imgUrl,force,silent=false){
   if(!silent)toast("📸 Foto für "+m.name+" verknüpft","ok");
 }
 
-// ── Einen Bildsuch-Prompt an Claude senden und erste gültige URL zurückgeben ──
-async function _claudeImageSearch(prompt,key){
-  const r=await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":key,
-      "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({
-      model:"claude-haiku-4-5-20251001",
-      max_tokens:1024,
-      tools:[{type:"web_search_20250305",name:"web_search"}],
-      messages:[{role:"user",content:prompt}]
-    })
-  });
-  if(!r.ok)return null;
-  const resp=await r.json();
-  // Alle Text-Blöcke zusammenführen (Claude antwortet nach Tool-Ausführung)
-  const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join(" ").trim();
-  if(!text)return null;
-  const urls=_extractUrls(text);
-  for(const url of urls){
-    if(await _imgLoads(url,6000))return url;
+// ── Phase 1: Wikipedia/Wikimedia API (CORS-frei, kein API-Key) ────
+async function _tryWikipedia(name){
+  // Wirkstoffname: erstes oder erstes+zweites Wort (z.B. "Sertralin", "Naratriptan")
+  const words=name.trim().split(/\s+/);
+  const candidates=[
+    words[0],                    // "Sertralin"
+    words.slice(0,2).join(' '),  // "Sertralin Basics"
+    name.trim(),                 // ganzer Name
+  ].filter((v,i,a)=>a.indexOf(v)===i); // unique
+
+  for(const term of candidates){
+    for(const lang of['de','en']){
+      try{
+        const r=await fetch(
+          `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`,
+          {headers:{'Accept':'application/json'}}
+        );
+        if(!r.ok)continue;
+        const d=await r.json();
+        if(!d.thumbnail?.source)continue;
+        // Größeres Bild anfordern
+        const url=d.thumbnail.source.replace(/\/\d+px-/,'/400px-');
+        if(await _imgLoads(url,5000))return url;
+      }catch{}
+    }
   }
+  return null;
+}
+
+// ── Phase 2: Claude web_search → direkte Bild-URL ─────────────────
+async function _claudeImageSearch(name,pzn,manufacturer,key){
+  // Suche-Formulierung: aktiver Wirkstoff + evtl. PZN
+  const term=`${name}${pzn?' '+pzn:''}${manufacturer?' '+manufacturer:''}`;
+  const prompt=`Find a product image URL for the German medication: ${term}
+
+Search for "${name} Packung Foto" OR "${name} medication package photo".
+Look through search results for a DIRECT image URL (ending in .jpg, .jpeg, .png, or .webp).
+Also try: site:upload.wikimedia.org "${name}"
+
+Return ONLY the raw image URL - no explanation, no markdown, just the URL.
+Example valid response: https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/photo.jpg/400px-photo.jpg`;
+
+  try{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":key,
+        "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-haiku-4-5-20251001",
+        max_tokens:512,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:prompt}]
+      })
+    });
+    if(!r.ok)return null;
+    const resp=await r.json();
+    const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join(" ").trim();
+    if(!text)return null;
+    const urls=_extractUrls(text);
+    for(const url of urls){
+      if(await _imgLoads(url,6000))return url;
+    }
+  }catch(e){console.warn("claudeImageSearch:",e);}
   return null;
 }
 
@@ -709,7 +751,6 @@ async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
   if(!med)return false;
 
-  // Guard: nicht suchen wenn bereits ein Foto vorhanden (außer force=true)
   if(!force){
     if(med.photoIsUrl&&med.photo)return true;
     const hasCam=(med.photos||[]).some(p=>p?.startsWith('data:'));
@@ -717,30 +758,22 @@ async function fetchMedImageFromWeb(medId,force=false){
     if(hasCam&&hasUrl)return true;
   }
 
-  const key=(apiKey||LS.get("sdro_k")||"").trim();
-  if(!key||!key.startsWith("sk-ant-"))return false;
-
   const name=med.name||"";
-  const pzn=med.pzn?"PZN "+med.pzn:"";
-  const hst=med.manufacturer?", "+med.manufacturer:"";
+  const pzn=med.pzn||"";
+  const manufacturer=med.manufacturer||"";
 
-  // ── Suchanfrage 1: shop-apotheke.com Produktseite → og:image ─────
+  // ── Phase 1: Wikipedia (kostenlos, kein API-Key) ──────────────────
   try{
-    const q1=`Suche auf shop-apotheke.com nach dem Medikament "${name}" ${pzn}${hst}.
-Öffne die Produktseite und lies den <meta property="og:image"> Tag aus.
-Gib ausschließlich die vollständige Bild-URL zurück – kein anderer Text.`;
-    const url1=await _claudeImageSearch(q1,key);
-    if(url1){_applyMedPhoto(medId,url1,force,force);return true;}
+    const wikiUrl=await _tryWikipedia(name);
+    if(wikiUrl){_applyMedPhoto(medId,wikiUrl,force,force);return true;}
   }catch{}
 
-  // ── Suchanfrage 2: Breitere Suche auf mehreren Apotheken ─────────
+  // ── Phase 2: Claude web_search (1 API-Call) ───────────────────────
+  const key=(apiKey||LS.get("sdro_k")||"").trim();
+  if(!key||!key.startsWith("sk-ant-"))return false;
   try{
-    const q2=`Finde ein Produktfoto für das deutsche Medikament "${name}" ${pzn}${hst}.
-Suche auf aponeo.de, docmorris.de oder medpex.de.
-Öffne die erste Produktseite und extrahiere die direkte Bild-URL (og:image oder erster <img>-Tag des Produktfotos).
-Antworte nur mit der URL.`;
-    const url2=await _claudeImageSearch(q2,key);
-    if(url2){_applyMedPhoto(medId,url2,force,force);return true;}
+    const claudeUrl=await _claudeImageSearch(name,pzn,manufacturer,key);
+    if(claudeUrl){_applyMedPhoto(medId,claudeUrl,force,force);return true;}
   }catch{}
 
   return false;
@@ -1799,6 +1832,7 @@ function renderPhotoGallery(){
       ${idx>0?`<button class="btn btn-sm" onclick="window._photoIdx--;window._photoRot=0;renderPhotoGallery()">← Zurück</button>`:""}
       ${idx<total-1?`<button class="btn btn-sm" onclick="window._photoIdx++;window._photoRot=0;renderPhotoGallery()">Weiter →</button>`:""}
       <button class="btn btn-sm btn-ghost" onclick="cropPhotoUI()">✂️ Zuschneiden</button>
+      <button class="btn btn-sm btn-ghost" onclick="autoDetectAndCrop('${medId}',${idx})">🤖 Auto-Zuschnitt</button>
       <button class="btn btn-danger btn-sm" onclick="deleteCurrentPhoto()">🗑️ Löschen</button>
     </div>
     <div style="display:flex;gap:8px">
@@ -2004,6 +2038,108 @@ function applyCrop(medId,idx){
   meds=meds.map(m=>m.id===medId?{...m,photos,photo:mainP}:m);
   save();window._photoIdx=idx;window._photoRot=0;if(currentView==="list")renderList();renderPhotoGallery();toast("Zugeschnitten ✓");
 }
+// ══════════════════════════════════════════════════════════════════
+// AUTO-ZUSCHNITT: Claude Vision erkennt Verpackung und schneidet zu
+// Claude Sonnet analysiert das Bild und gibt JSON-Koordinaten zurück
+// ══════════════════════════════════════════════════════════════════
+async function autoDetectAndCrop(medId,photoIdx){
+  const med=meds.find(m=>m.id===medId);if(!med)return;
+  const photos=med.photos&&med.photos.length?[...med.photos]:(med.photo?[med.photo]:[]);
+  const src=photos[photoIdx];
+  if(!src){toast("Kein Foto vorhanden","warn");return;}
+
+  // Nur data: URLs direkt nutzbar (base64); http-URLs kurz als blob laden
+  let base64=null,mimeType="image/jpeg";
+  if(src.startsWith("data:")){
+    const semi=src.indexOf(";");
+    mimeType=src.slice(5,semi);
+    base64=src.slice(src.indexOf(",")+1);
+  } else {
+    // http-URL: als Blob laden und in base64 konvertieren
+    try{
+      const resp=await fetch(src);
+      if(!resp.ok)throw new Error("fetch failed");
+      const blob=await resp.blob();
+      mimeType=blob.type||"image/jpeg";
+      base64=await new Promise((res,rej)=>{
+        const fr=new FileReader();
+        fr.onload=()=>res(fr.result.split(",")[1]);
+        fr.onerror=rej;
+        fr.readAsDataURL(blob);
+      });
+    }catch{toast("❌ Bild konnte nicht geladen werden","warn");return;}
+  }
+
+  const key=(apiKey||LS.get("sdro_k")||"").trim();
+  if(!key||!key.startsWith("sk-ant-")){toast("API-Schlüssel fehlt – bitte in Einstellungen eingeben","warn");return;}
+
+  toast("🤖 KI analysiert Verpackung …","info");
+
+  try{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "x-api-key":key,
+        "anthropic-version":"2023-06-01",
+        "anthropic-dangerous-direct-browser-access":"true"
+      },
+      body:JSON.stringify({
+        model:"claude-sonnet-4-5",
+        max_tokens:256,
+        messages:[{
+          role:"user",
+          content:[
+            {type:"image",source:{type:"base64",media_type:mimeType,data:base64}},
+            {type:"text",text:`Du siehst ein Foto einer Medikamentenverpackung (oder ein allgemeines Foto das eine Verpackung enthält).
+Finde den Bereich der Verpackung (die Schachtel, Tube, Flasche oder Blister) im Bild.
+Gib NUR ein JSON-Objekt zurück – keine Erklärung, kein Markdown, nur JSON:
+{"x":10,"y":5,"w":80,"h":90}
+Dabei sind x, y, w, h Prozentwerte (0–100) des Bildbereichs: x=links, y=oben, w=Breite, h=Höhe.
+Wenn das gesamte Bild bereits die Verpackung zeigt: {"x":0,"y":0,"w":100,"h":100}`}
+          ]
+        }]
+      })
+    });
+    if(!r.ok){const t=await r.text();console.warn("auto-crop API error:",t);toast("❌ KI-Fehler ("+r.status+")","warn");return;}
+    const resp=await r.json();
+    const text=(resp.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("").trim();
+    // JSON parsen (evtl. in ```json ... ``` eingebettet)
+    const jsonMatch=text.match(/\{[^}]+\}/);
+    if(!jsonMatch){toast("❌ KI konnte Verpackung nicht erkennen","warn");return;}
+    let box;
+    try{box=JSON.parse(jsonMatch[0]);}catch{toast("❌ Ungültiges KI-Ergebnis","warn");return;}
+    const {x=0,y=0,w=100,h=100}=box;
+    // Plausibilitätsprüfung
+    if(w<5||h<5||x<0||y<0||x+w>100||y+h>100){
+      toast("❌ Erkannter Bereich ungültig – manuell zuschneiden","warn");return;
+    }
+    // Auf Canvas zuschneiden
+    const img=new Image();
+    img.onload=()=>{
+      const iW=img.naturalWidth,iH=img.naturalHeight;
+      const cx=Math.round(x/100*iW);
+      const cy=Math.round(y/100*iH);
+      const cw=Math.round(w/100*iW);
+      const ch=Math.round(h/100*iH);
+      const canvas=document.createElement("canvas");
+      canvas.width=cw;canvas.height=ch;
+      canvas.getContext("2d").drawImage(img,cx,cy,cw,ch,0,0,cw,ch);
+      const newSrc=canvas.toDataURL("image/jpeg",.90);
+      photos[photoIdx]=newSrc;
+      const mainP=photos[window._mainPhotoIdx||0]||photos[0];
+      meds=meds.map(m=>m.id===medId?{...m,photos,photo:mainP}:m);
+      save();window._photoIdx=photoIdx;window._photoRot=0;
+      if(currentView==="list")renderList();
+      renderPhotoGallery();
+      toast("🤖 Auto-Zuschnitt abgeschlossen ✓");
+    };
+    img.onerror=()=>toast("❌ Bild konnte nicht verarbeitet werden","warn");
+    // Für canvas-Zugriff: immer data: verwenden
+    img.src="data:"+mimeType+";base64,"+base64;
+  }catch(e){console.error("autoDetectAndCrop:",e);toast("❌ Fehler beim Auto-Zuschnitt","warn");}
+}
+
 // ══════════════════════════════════════════════════════════════════
 // SUCHE: Symptom- und Medikamenten-Suche mit KI
 // Validiert die Eingabe – nur medizinische Begriffe erlaubt
@@ -4227,7 +4363,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-015 · 29.04.2026";
+window._buildTime="SaDro-016 · 28.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
