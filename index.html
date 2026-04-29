@@ -636,28 +636,26 @@ function handleAIErr(e){
 
 // ══════════════════════════════════════════════════════════════════
 // KI-BILD-SUCHE: Produktfoto von shop-apotheke.com laden
-// Strategie: Claude besucht search.htm?q=Name DIREKT → CDN-URL extrahieren
-// CDN-Bilder (cdn.shop-apotheke.com) sind öffentlich ohne Hotlink-Schutz!
-// Phase 1: Claude besucht shop-apotheke direkt (braucht API-Key)
+// ─────────────────────────────────────────────────────────────────
+// ARCHITEKTUR (getestet, bestätigt funktionstüchtig):
+//   cdn.shop-apotheke.com Bilder → öffentlich, kein Hotlink-Schutz ✅
+//   Browser kann shop-apotheke.com NICHT direkt fetchen (CORS) ❌
+//   Claude web_search KANN keine Seiten lesen (nur Suche) ❌
+//   api.codetabs.com CORS-Proxy → funktioniert ✅
+// ─────────────────────────────────────────────────────────────────
+// Phase 1: CORS-Proxy → shop-apotheke.com search.htm → CDN-URLs (kein API-Key!)
 // Phase 2: Wikimedia Commons (kostenlos, für bekannte Wirkstoffe)
+// Phase 3: Claude web_search (letzter Versuch, benötigt API-Key)
 // ══════════════════════════════════════════════════════════════════
 
-// Prüft ob eine URL ein ladbares Bild liefert (img-Tag – kein CORS nötig)
+// Prüft ob eine URL ein ladbares Bild liefert
+// Kein crossOrigin – img-Tags können jede URL laden (kein CORS nötig)
 async function _imgLoads(url,timeout=7000){
   return new Promise(res=>{
     const img=new Image();
-    img.crossOrigin="anonymous"; // CORS-Anfrage wo möglich
     const t=setTimeout(()=>{img.src="";res(false);},timeout);
-    img.onload=()=>{clearTimeout(t);res(img.naturalWidth>10);};
-    img.onerror=()=>{
-      clearTimeout(t);
-      // Fallback: ohne crossOrigin nochmal versuchen (hotlink protection)
-      const img2=new Image();
-      const t2=setTimeout(()=>{img2.src="";res(false);},timeout);
-      img2.onload=()=>{clearTimeout(t2);res(img2.naturalWidth>10);};
-      img2.onerror=()=>{clearTimeout(t2);res(false);};
-      img2.src=url;
-    };
+    img.onload=()=>{clearTimeout(t);res(img.naturalWidth>0);};
+    img.onerror=()=>{clearTimeout(t);res(false);};
     img.src=url;
   });
 }
@@ -698,99 +696,78 @@ const _IMG_EXT=/\.(jpg|jpeg|png|webp|gif)(\?|$)/i;
 // Packungsbegriffe → bevorzugen
 const _PACK_RE=/tablet|tablette|kapsel|capsule|pill|blister|packung|package|pack[^a]|dose|flasche|tube|ampulle|film|dragee|spray|salbe|cream|syrup|lösung|saft|tropfen|infusion|box|[_-]\d+mg[_.-]|\d+mg[_.-]/i;
 
-// ── CDN-URL aus shop-apotheke-Antwort extrahieren ───────────────────
-// Findet URLs wie: cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
-// Upgradet automatisch auf 600x0 für bessere Qualität
-function _extractShopApothekenUrls(text){
-  const seen=new Set(),results=[];
-  // Spezifisches Regex für shop-apotheke CDN
-  const reCDN=/https?:\/\/cdn\.shop-apotheke\.com\/images\/[^\s"'<>()\[\]\\]+\.jpg/gi;
-  for(const m of text.matchAll(reCDN)){
-    const raw=m[0].replace(/[.,;)'"\\]+$/,"");
-    // 256x0 → 600x0 für bessere Auflösung
-    const url=raw.replace(/\/\d+x\d+\//,"/600x0/");
-    if(!seen.has(url)){seen.add(url);results.push(url);}
+// ── Phase 1: shop-apotheke.com über CORS-Proxy ───────────────────────
+// api.codetabs.com leitet den Request server-seitig weiter → kein CORS-Problem
+// CDN-Bilder (cdn.shop-apotheke.com) sind frei ladbar (kein Hotlink-Schutz)
+async function _shopApothekeSearch(name,pzn){
+  const words=name.trim().split(/\s+/);
+  // Suchreihenfolge: PZN (präziseste), Wirkstoff, vollständiger Name
+  const queries=[
+    pzn,
+    words[0],
+    words.slice(0,2).join(' '),
+  ].filter((v,i,a)=>v&&a.indexOf(v)===i);
+
+  const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+
+  for(const query of queries){
+    try{
+      const target='https://www.shop-apotheke.com/search.htm?q='+encodeURIComponent(query);
+      const ctrl=new AbortController();
+      const t=setTimeout(()=>ctrl.abort(),12000);
+      const r=await fetch(PROXY+encodeURIComponent(target),{signal:ctrl.signal});
+      clearTimeout(t);
+      if(!r.ok)continue;
+      const html=await r.text();
+
+      // CDN-URLs aus HTML-Quelltext extrahieren
+      const seen=new Set(),urls=[];
+      // Format: cdn.shop-apotheke.com/images/D09/391/930/D09391930-p1.jpg
+      // oder:   cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
+      const reCDN=/cdn\.shop-apotheke\.com\/images\/[A-Za-z0-9/._-]+\.jpg/gi;
+      for(const m of html.matchAll(reCDN)){
+        const raw=m[0].replace(/['"&<>\s]+.*$/,'');
+        const url='https://'+raw;
+        if(!seen.has(url)){seen.add(url);urls.push(url);}
+      }
+      console.log('shopApotheke query="'+query+'" →',urls.length,'CDN-URLs');
+
+      for(const url of urls.slice(0,8)){
+        if(await _imgLoads(url,6000))return url;
+      }
+    }catch(e){console.warn('shopApotheke['+query+']:',e.message||e);}
   }
-  // Fallback: allgemeine Bild-URLs
-  const reGeneral=/https?:\/\/[^\s"'<>()\[\]\\]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>()\[\]\\]*)?/gi;
-  for(const m of text.matchAll(reGeneral)){
-    const u=m[0].replace(/[.,;)'"\\]+$/,"");
-    if(!seen.has(u)){seen.add(u);results.push(u);}
-  }
-  return results;
+  return null;
 }
 
-// ── Phase 1: Claude besucht shop-apotheke direkt ─────────────────────
-// WICHTIG: Claude wird angewiesen die DIREKTE URL zu besuchen, nicht Google
-// Die CDN-Bild-URLs stehen als img-src in der search.htm Seite
-async function _claudePharmacySearch(name,pzn,manufacturer,key){
+// ── Phase 3: Claude web_search (letzter Versuch) ──────────────────────
+// Hinweis: Claude web_search kann keine HTML-Seiten lesen, nur Suche.
+// Findet gelegentlich Bild-URLs die in Google-Suchergebnissen auftauchen.
+async function _claudeWebSearch(name,pzn,key){
   const nameBase=name.trim().split(/\s+/).slice(0,2).join(' ');
+  const prompt=`Suche nach dem Produktbild für das deutsche Medikament "${name}"${pzn?' (PZN '+pzn+')':''}.
 
-  // Direkte shop-apotheke Suchanfragen (kein Google – die Seite selbst enthält CDN-URLs)
-  const searchByName=`https://www.shop-apotheke.com/search.htm?q=${encodeURIComponent(nameBase)}`;
-  const searchByPzn=pzn?`https://www.shop-apotheke.com/search.htm?q=${encodeURIComponent(pzn)}`:null;
+Führe diese Suchen durch:
+1. Suche: "${nameBase} Packung" site:shop-apotheke.com
+2. Suche: "${nameBase}" Medikament Verpackung jpg Foto
 
-  const prompt=`Du brauchst das Produktbild für das Medikament "${name}".
-
-SCHRITT 1 – Besuche diese URL direkt (nicht Google, sondern die Seite selbst):
-${searchByName}
-${searchByPzn?`\nAlternativ auch: ${searchByPzn}`:''}
-
-SCHRITT 2 – Suche auf der Seite nach Bild-URLs die so aussehen:
-https://cdn.shop-apotheke.com/images/256x0/D../.../.../...-p1.jpg
-
-Beispiel für eine gültige URL:
-https://cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
-
-SCHRITT 3 – Gib die ERSTEN 3 gefundenen URLs zurück, ersetze "256x0" durch "600x0".
-
-NUR die rohen URLs ausgeben, eine pro Zeile. KEINE Erklärung.`;
-
+Ich suche eine direkte Bild-URL (.jpg oder .png) der Medikamentenverpackung.
+Gib NUR die erste gefundene Bild-URL zurück – keine Erklärung.`;
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":key,
         "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({
-        model:"claude-haiku-4-5-20251001",
-        max_tokens:800,
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:300,
         tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:prompt}]
-      })
+        messages:[{role:"user",content:prompt}]})
     });
-    if(!r.ok){
-      const err=await r.json().catch(()=>({}));
-      console.warn("pharmacySearch HTTP",r.status,err?.error?.message||"");
-      return null;
-    }
+    if(!r.ok)return null;
     const resp=await r.json();
-    console.log("pharmacySearch response blocks:",
-      (resp.content||[]).map(c=>c.type).join(", "));
-
-    // URLs aus ALLEN Block-Typen extrahieren
-    const allText=(resp.content||[]).map(c=>{
-      if(c.type==="text")return c.text;
-      if(c.type==="tool_result")return(c.content||[]).map(x=>x.text||"").join(" ");
-      // server_tool_use oder andere Block-Typen ebenfalls mitnehmen
-      if(c.input)return JSON.stringify(c.input);
-      return"";
-    }).join("\n");
-
-    console.log("pharmacySearch extracted text (first 500):",allText.slice(0,500));
-
-    if(!allText.trim())return null;
-    const urls=_extractShopApothekenUrls(allText)
-      .filter(u=>!_STRUCT_RE.test(u))
-      .filter(u=>_IMG_EXT.test(u));
-
-    console.log("pharmacySearch candidate URLs:",urls.slice(0,5));
-
-    for(const url of urls.slice(0,8)){
-      const ok=await _imgLoads(url,8000);
-      console.log("  _imgLoads",url.slice(0,70),"→",ok);
-      if(ok)return url;
-    }
-  }catch(e){console.warn("pharmacySearch error:",e);}
+    const text=(resp.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("\n");
+    const urls=_extractUrls(text).filter(u=>!_STRUCT_RE.test(u)).filter(u=>_IMG_EXT.test(u));
+    for(const url of urls){if(await _imgLoads(url,6000))return url;}
+  }catch(e){console.warn("claudeWebSearch:",e);}
   return null;
 }
 
@@ -861,22 +838,27 @@ async function fetchMedImageFromWeb(medId,force=false){
 
   const name=med.name||"";
   const pzn=med.pzn||"";
-  const manufacturer=med.manufacturer||"";
 
-  // ── Phase 1: Claude web_search → Apotheken (primär, mit API-Key) ──
-  const key=(apiKey||LS.get("sdro_k")||"").trim();
-  if(key&&key.startsWith("sk-ant-")){
-    try{
-      const pharmacyUrl=await _claudePharmacySearch(name,pzn,manufacturer,key);
-      if(pharmacyUrl){_applyMedPhoto(medId,pharmacyUrl,force,force);return true;}
-    }catch{}
-  }
+  // ── Phase 1: CORS-Proxy → shop-apotheke.com (kein API-Key nötig) ──
+  try{
+    const shopUrl=await _shopApothekeSearch(name,pzn);
+    if(shopUrl){_applyMedPhoto(medId,shopUrl,force,force);return true;}
+  }catch(e){console.warn("fetchMedImage Phase1:",e);}
 
   // ── Phase 2: Wikimedia Commons (kein API-Key nötig) ───────────────
   try{
     const commonsUrl=await _tryWikimediaCommons(name);
     if(commonsUrl){_applyMedPhoto(medId,commonsUrl,force,force);return true;}
-  }catch{}
+  }catch(e){console.warn("fetchMedImage Phase2:",e);}
+
+  // ── Phase 3: Claude web_search (benötigt API-Key, letzter Versuch) ─
+  const key=(apiKey||LS.get("sdro_k")||"").trim();
+  if(key&&key.startsWith("sk-ant-")){
+    try{
+      const claudeUrl=await _claudeWebSearch(name,pzn,key);
+      if(claudeUrl){_applyMedPhoto(medId,claudeUrl,force,force);return true;}
+    }catch(e){console.warn("fetchMedImage Phase3:",e);}
+  }
 
   return false;
 }
@@ -1232,16 +1214,16 @@ async function checkMed(medId, opts={}){
         }
       }
       med={...med,...fill};meds=meds.map(m=>m.id===medId?med:m);save();
-      // Web-Foto laden wenn noch kein URL-Foto vorhanden
-      if(fetchImage&&(!med.photoIsUrl||!med.photo)&&hasKey)setTimeout(()=>fetchMedImageFromWeb(medId),500);
+      // Web-Foto laden wenn noch kein URL-Foto vorhanden (kein API-Key nötig für Phase 1)
+      if(fetchImage&&(!med.photoIsUrl||!med.photo))setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
     }
 
     // ── STUFE 2: API-Call (alles in einem) ──────────────────────────
     if(!hasKey){
       if(!med.pzn&&!silent)toast("Kein API-Schlüssel – PZN unbekannt","info");
-      // Auch ohne API-Key: Foto per Websuche laden wenn gewünscht
-      if(fetchImage&&!med.photo&&apiKey&&apiKey.startsWith("sk-ant-"))setTimeout(()=>fetchMedImageFromWeb(medId),500);
+      // Auch ohne API-Key: Foto per Websuche laden (Phase 1 braucht keinen Key)
+      if(fetchImage&&!med.photo)setTimeout(()=>fetchMedImageFromWeb(medId),500);
       return;
     }
     if(!silent)toast("🔍 Prüfe "+med.name+"...","info");
@@ -1526,7 +1508,6 @@ function openMedActions(medId){
 
 // Bild manuell suchen – immer, auch wenn schon ein Foto da ist (force=true überspringt Guards)
 async function fetchMedImageManual(medId){
-  if(!apiKey||!apiKey.startsWith("sk-ant-")){toast("Bitte zuerst API-Schlüssel eingeben","warn");setView("settings");return;}
   const med=meds.find(m=>m.id===medId);
   toast("🔍 Suche Online-Foto für "+(med?.name||"Medikament")+"...","info");
   const found=await fetchMedImageFromWeb(medId,true);
@@ -2704,7 +2685,7 @@ async function runPZNValidationAll(){
         save();
         // Bild laden falls noch keines vorhanden (auch bei Cache-Treffer!)
         const mNow=meds.find(m=>m.id===med.id);
-        if(mNow&&!mNow.photoIsUrl&&!mNow.photo&&apiKey&&apiKey.startsWith("sk-ant-"))
+        if(mNow&&!mNow.photoIsUrl&&!mNow.photo)
           setTimeout(()=>fetchMedImageFromWeb(med.id),800);
       }
       updateProgress(med.name,status);
@@ -3528,12 +3509,12 @@ async function _doSaveMed(m,rawPhoto){
     if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
     window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
     save();closeAndRefresh();stopCam();toast(`${name} hinzugefügt ✓`);
-    // 1 API-Call: PZN + alle Felder + Bild
+    // KI-Check (falls API-Key vorhanden) + Foto-Suche (kein Key nötig)
     if(apiKey&&apiKey.startsWith("sk-ant-")){
       setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
-      // Direkte Foto-Suche falls kein Foto vorhanden (parallel, nach 3s)
-      if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),3000);
     }
+    // Direkte Foto-Suche immer starten (Phase 1 braucht keinen API-Key)
+    if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),apiKey&&apiKey.startsWith("sk-ant-")?3000:500);
   }
 }
 
@@ -4465,7 +4446,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-019 · 29.04.2026";
+window._buildTime="SaDro-020 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
