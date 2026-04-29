@@ -635,32 +635,42 @@ function handleAIErr(e){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// KI-BILD-SUCHE: Produktfoto laden
-// Phase 1: Wikipedia/Wikimedia API (kostenlos, kein API-Key)
-// Phase 2: Claude web_search (1 API-Call)
+// KI-BILD-SUCHE: Produktfoto von Apotheken-Websites laden
+// Phase 1: Claude web_search → shop-apotheke, aponeo, medpex usw.
+// Phase 2: Wikimedia Commons (Fallback für bekannte Wirkstoffe)
+// Wikipedia entfernt – hat keine Medikamenten-Packungsfotos!
 // ══════════════════════════════════════════════════════════════════
 
-// Prüft ob eine URL wirklich ein ladbares Bild liefert
-async function _imgLoads(url,timeout=5000){
+// Prüft ob eine URL ein ladbares Bild liefert (img-Tag – kein CORS nötig)
+async function _imgLoads(url,timeout=7000){
   return new Promise(res=>{
     const img=new Image();
+    img.crossOrigin="anonymous"; // CORS-Anfrage wo möglich
     const t=setTimeout(()=>{img.src="";res(false);},timeout);
-    img.onload=()=>{clearTimeout(t);res(img.naturalWidth>0);};
-    img.onerror=()=>{clearTimeout(t);res(false);};
+    img.onload=()=>{clearTimeout(t);res(img.naturalWidth>10);};
+    img.onerror=()=>{
+      clearTimeout(t);
+      // Fallback: ohne crossOrigin nochmal versuchen (hotlink protection)
+      const img2=new Image();
+      const t2=setTimeout(()=>{img2.src="";res(false);},timeout);
+      img2.onload=()=>{clearTimeout(t2);res(img2.naturalWidth>10);};
+      img2.onerror=()=>{clearTimeout(t2);res(false);};
+      img2.src=url;
+    };
     img.src=url;
   });
 }
 
-// http(s)-URLs aus Text extrahieren und deduplizieren
+// Alle http-Bild-URLs aus Text extrahieren
 function _extractUrls(text){
   const seen=new Set(),results=[];
-  const patterns=[
-    /https?:\/\/[^\s"'<>()\[\]]+\.(?:jpg|jpeg|png|webp|gif)(?:[?#][^\s"'<>()\[\]]*)?/gi,
-    /https?:\/\/(?:cdn|media|img|images|static|assets|upload|commons)[^\s"'<>()\[\]]{10,}/gi,
-  ];
-  for(const re of patterns){
+  // Direkte Bild-URLs mit Extension
+  const re1=/https?:\/\/[^\s"'<>()\[\]\\]+\.(?:jpg|jpeg|png|webp|gif)(?:[?#][^\s"'<>()\[\]\\]*)?/gi;
+  // CDN-URLs ohne Extension (apothekenCDNs)
+  const re2=/https?:\/\/(?:cdn|media|img|images|static|assets|bilder|photo|product)[^\s"'<>()\[\]\\]{15,}/gi;
+  for(const re of[re1,re2]){
     for(const m of text.matchAll(re)){
-      const u=m[0].replace(/[.,;:)>\]'"]+$/,"");
+      const u=m[0].replace(/[.,;:)>\]'"\\]+$/,"");
       if(u.startsWith("http")&&!seen.has(u)){seen.add(u);results.push(u);}
     }
   }
@@ -680,102 +690,38 @@ function _applyMedPhoto(medId,imgUrl,force,silent=false){
   if(!silent)toast("📸 Foto für "+m.name+" verknüpft","ok");
 }
 
-// ── Chemische Strukturformeln erkennen (Hexagon-Muster = ausschließen) ──
-// Diese URLs zeigen Moleküle, keine Verpackungen → immer ablehnen
-const _STRUCT_RE=/struktur|structure|formula|molecule|skelett|synthes|crystal|isomer|stereo|chemica|\.svg|hexagon|benzol|ring_/i;
-// Verpackungsbezogene Begriffe → bevorzugen
-const _PACK_RE=/packung|package|pack[^a]|tablette|kapsel|blister|dose|flasche|tube|ampulle|film|dragee|pille|spray|gel|salbe|cream|box|karton/i;
+// Ausschlussliste: Moleküle, Strukturformeln, Nicht-Bilder
+const _STRUCT_RE=/struktur|structure|formula|molecule|skelett|skeletal|synthes|crystal|isomer|stereo|chemica|\.svg|\.pdf|\.wav|\.mp3|\.ogg|\.mp4|3d[_-]|[_-]3d[._-]|sticks\.|balls\.|position_\d|hexagon|benzol|ring_/i;
+// Nur echte Bilddateien (Whitelist)
+const _IMG_EXT=/\.(jpg|jpeg|png|webp|gif)(\?|$)/i;
+// Packungsbegriffe → bevorzugen
+const _PACK_RE=/tablet|tablette|kapsel|capsule|pill|blister|packung|package|pack[^a]|dose|flasche|tube|ampulle|film|dragee|spray|salbe|cream|syrup|lösung|saft|tropfen|infusion|box|[_-]\d+mg[_.-]|\d+mg[_.-]/i;
 
-// ── Phase 1a: Wikimedia Commons Search API (CORS-frei, kein API-Key) ─
-// Sucht nach echten Packungsfotos in Wikimedia Commons
-async function _tryWikimediaCommons(name){
-  const words=name.trim().split(/\s+/);
-  const base=words.slice(0,2).join(' ');
-  // Suchbegriffe: Wirkstoff + Packungsbegriffe
-  const searchTerms=[
-    base+' Packung',
-    base+' package',
-    base+' Tabletten',
-    base+' Filmtabletten',
-    base,
-    words[0]+' Packung',
-    words[0],
-  ].filter((v,i,a)=>a.indexOf(v)===i);
-
-  for(const term of searchTerms){
-    try{
-      const apiUrl='https://commons.wikimedia.org/w/api.php?action=query'
-        +'&generator=search&gsrnamespace=6&gsrsearch='+encodeURIComponent(term)
-        +'&prop=imageinfo&iiprop=url&format=json&origin=*&gsrlimit=15';
-      const r=await fetch(apiUrl,{headers:{'Accept':'application/json'}});
-      if(!r.ok)continue;
-      const d=await r.json();
-      const pages=Object.values(d.query?.pages||{});
-      if(!pages.length)continue;
-
-      // Struktur-SVG/Moleküle rausfiltern, Packungsfotos bevorzugen
-      const valid=pages
-        .filter(p=>p.imageinfo?.[0]?.url)
-        .map(p=>({url:p.imageinfo[0].url,title:(p.title||'').toLowerCase()}))
-        .filter(({url,title})=>!_STRUCT_RE.test(url)&&!_STRUCT_RE.test(title))
-        .sort((a,b)=>{
-          // Packungsbegriffe im Dateinamen → nach oben sortieren
-          const aP=_PACK_RE.test(a.url)||_PACK_RE.test(a.title)?0:1;
-          const bP=_PACK_RE.test(b.url)||_PACK_RE.test(b.title)?0:1;
-          return aP-bP;
-        });
-
-      for(const {url} of valid){
-        if(await _imgLoads(url,6000))return url;
-      }
-    }catch{}
-  }
-  return null;
-}
-
-// ── Phase 1b: Wikipedia Summary API – NUR wenn kein Strukturbild ────
-// Wikipedia-Thumbnails von Medikamenten sind oft Moleküldiagramme → filtern!
-async function _tryWikipedia(name){
-  const words=name.trim().split(/\s+/);
-  const candidates=[words[0], words.slice(0,2).join(' ')].filter((v,i,a)=>a.indexOf(v)===i);
-
-  for(const term of candidates){
-    for(const lang of['de','en']){
-      try{
-        const r=await fetch(
-          `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`,
-          {headers:{'Accept':'application/json'}}
-        );
-        if(!r.ok)continue;
-        const d=await r.json();
-        if(!d.thumbnail?.source)continue;
-        const rawUrl=d.thumbnail.source;
-        // Chemische Strukturbilder ausschließen (Hexagon-Muster etc.)
-        if(_STRUCT_RE.test(rawUrl))continue;
-        // Nur Fotos (JPG/JPEG/PNG/WEBP) – keine SVG-Vektorgrafiken
-        if(/\.svg/i.test(rawUrl))continue;
-        const url=rawUrl.replace(/\/\d+px-/,'/400px-');
-        if(await _imgLoads(url,5000))return url;
-      }catch{}
-    }
-  }
-  return null;
-}
-
-// ── Phase 2: Claude web_search – gezielt nach Packungsfoto ───────────
-async function _claudeImageSearch(name,pzn,manufacturer,key){
+// ── Phase 1: Claude web_search → Apotheken-Websites ─────────────────
+// Sucht auf deutschen Apotheken-Sites nach Produktfotos
+async function _claudePharmacySearch(name,pzn,manufacturer,key){
   const nameBase=name.trim().split(/\s+/).slice(0,2).join(' ');
-  const prompt=`Search for a PHOTO of the physical medication PACKAGING (box/carton/bottle) for: "${name}"${pzn?' (PZN: '+pzn+')':''}.
+  const pznHint=pzn?` (PZN ${pzn})`:'';
+  const mfrHint=manufacturer?` von ${manufacturer}`:'';
 
-IMPORTANT:
-- I need a photo of the actual package/box/bottle, NOT a chemical structure diagram or molecular formula
-- Search: "${nameBase} Packungsfoto" OR "${nameBase} medication package photo"
-- Try Wikimedia Commons: site:commons.wikimedia.org "${nameBase}" packung
-- Try: site:upload.wikimedia.org "${nameBase}"
-- Only return image URLs ending in .jpg, .jpeg, .png, or .webp (NOT .svg)
-- Reject any URL containing: struktur, structure, formula, molecule, skelett, chemical
+  const prompt=`Du suchst das Produktfoto der deutschen Medikamentenpackung: "${name}"${pznHint}${mfrHint}
 
-Return ONLY the direct image URL. No markdown, no explanation. Just the URL.`;
+Führe diese Web-Suchen durch:
+1. Suche: "${nameBase} Packung" site:shop-apotheke.de
+2. Suche: "${nameBase} Produktbild" apotheke
+3. Falls PZN bekannt: PZN "${pzn}" apotheke Packung
+
+Besuche das Suchergebnis und extrahiere die direkte Bild-URL der Produktseite.
+Deutsche Apotheken-CDN-Muster (nach diesen URLs suchen):
+- cdn.shop-apotheke.com/images/...
+- img.medpex.de/...
+- cdn.aponeo.de/... oder bilder.aponeo.de/...
+- cdn.sanicare.de/...
+- img.apotheke.com/...
+- images.docmorris.de/...
+
+Gib bis zu 5 direkte Bild-URLs aus (.jpg oder .png), eine pro Zeile.
+NUR die rohen URLs – keine Erklärung, kein Markdown.`;
 
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -784,22 +730,80 @@ Return ONLY the direct image URL. No markdown, no explanation. Just the URL.`;
         "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-haiku-4-5-20251001",
-        max_tokens:512,
+        max_tokens:1024,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:prompt}]
       })
     });
     if(!r.ok)return null;
     const resp=await r.json();
-    const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join(" ").trim();
-    if(!text)return null;
-    const urls=_extractUrls(text)
-      .filter(u=>!_STRUCT_RE.test(u))   // Strukturbilder rauswerfen
-      .filter(u=>!/\.svg/i.test(u));     // SVG rauswerfen
+    // URLs aus ALLEN Antwort-Blöcken extrahieren (text + tool_result)
+    const allText=(resp.content||[]).map(c=>{
+      if(c.type==="text")return c.text;
+      if(c.type==="tool_result")return(c.content||[]).map(x=>x.text||"").join(" ");
+      return"";
+    }).join("\n");
+    if(!allText)return null;
+    const urls=_extractUrls(allText)
+      .filter(u=>!_STRUCT_RE.test(u))
+      .filter(u=>_IMG_EXT.test(u));
     for(const url of urls){
-      if(await _imgLoads(url,6000))return url;
+      if(await _imgLoads(url,8000))return url;
     }
-  }catch(e){console.warn("claudeImageSearch:",e);}
+  }catch(e){console.warn("claudePharmacySearch:",e);}
+  return null;
+}
+
+// ── Phase 2: Wikimedia Commons (Fallback für häufige Wirkstoffe) ─────
+// Gute Quelle für: Ibuprofen, Sertralin, Aspirin, Metformin, Cetirizin usw.
+// Gibt leere Ergebnisse für seltenere oder Markenmedikamente → dann Phase 1
+async function _tryWikimediaCommons(name){
+  const words=name.trim().split(/\s+/);
+  const word1=words[0];
+  const word2=words.slice(0,2).join(' ');
+  const searchTerms=[word1,word2].filter((v,i,a)=>a.indexOf(v)===i);
+  const nameBase=word1.toLowerCase();
+  const nameShort=nameBase.slice(0,6);
+
+  for(const term of searchTerms){
+    try{
+      const apiUrl='https://commons.wikimedia.org/w/api.php?action=query'
+        +'&generator=search&gsrnamespace=6&gsrsearch='+encodeURIComponent(term)
+        +'&prop=imageinfo&iiprop=url&format=json&origin=*&gsrlimit=20';
+      const r=await fetch(apiUrl,{headers:{'Accept':'application/json'}});
+      if(!r.ok)continue;
+      const d=await r.json();
+      const pages=Object.values(d.query?.pages||{});
+      if(!pages.length)continue;
+
+      const valid=pages
+        .filter(p=>p.imageinfo?.[0]?.url)
+        .map(p=>{
+          const url=p.imageinfo[0].url;
+          const fname=decodeURIComponent(url.split('/').pop()||'').toLowerCase();
+          return{url,fname};
+        })
+        .filter(({url})=>_IMG_EXT.test(url))
+        .filter(({url,fname})=>!_STRUCT_RE.test(url)&&!_STRUCT_RE.test(fname))
+        .map(({url,fname})=>{
+          let score=0;
+          if(_PACK_RE.test(fname)||_PACK_RE.test(url))score-=10;
+          const bareMatch=fname.replace(/\.(jpg|jpeg|png|webp|gif)$/,'')===nameBase;
+          if(bareMatch)score+=5;
+          return{url,fname,score};
+        })
+        .sort((a,b)=>a.score-b.score)
+        .filter(({fname,score})=>{
+          if(score<0)return true;
+          if(score>=5)return false;
+          return fname.includes(nameShort);
+        });
+
+      for(const {url} of valid){
+        if(await _imgLoads(url,6000))return url;
+      }
+    }catch{}
+  }
   return null;
 }
 
@@ -819,24 +823,19 @@ async function fetchMedImageFromWeb(medId,force=false){
   const pzn=med.pzn||"";
   const manufacturer=med.manufacturer||"";
 
-  // ── Phase 1a: Wikimedia Commons (Packungsfotos bevorzugt) ────────
+  // ── Phase 1: Claude web_search → Apotheken (primär, mit API-Key) ──
+  const key=(apiKey||LS.get("sdro_k")||"").trim();
+  if(key&&key.startsWith("sk-ant-")){
+    try{
+      const pharmacyUrl=await _claudePharmacySearch(name,pzn,manufacturer,key);
+      if(pharmacyUrl){_applyMedPhoto(medId,pharmacyUrl,force,force);return true;}
+    }catch{}
+  }
+
+  // ── Phase 2: Wikimedia Commons (kein API-Key nötig) ───────────────
   try{
     const commonsUrl=await _tryWikimediaCommons(name);
     if(commonsUrl){_applyMedPhoto(medId,commonsUrl,force,force);return true;}
-  }catch{}
-
-  // ── Phase 1b: Wikipedia (nur wenn kein Strukturbild) ─────────────
-  try{
-    const wikiUrl=await _tryWikipedia(name);
-    if(wikiUrl){_applyMedPhoto(medId,wikiUrl,force,force);return true;}
-  }catch{}
-
-  // ── Phase 2: Claude web_search (1 API-Call) ───────────────────────
-  const key=(apiKey||LS.get("sdro_k")||"").trim();
-  if(!key||!key.startsWith("sk-ant-"))return false;
-  try{
-    const claudeUrl=await _claudeImageSearch(name,pzn,manufacturer,key);
-    if(claudeUrl){_applyMedPhoto(medId,claudeUrl,force,force);return true;}
   }catch{}
 
   return false;
@@ -4426,7 +4425,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-016 · 29.04.2026";
+window._buildTime="SaDro-018 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
