@@ -635,10 +635,11 @@ function handleAIErr(e){
 }
 
 // ══════════════════════════════════════════════════════════════════
-// KI-BILD-SUCHE: Produktfoto von Apotheken-Websites laden
-// Phase 1: Claude web_search → shop-apotheke, aponeo, medpex usw.
-// Phase 2: Wikimedia Commons (Fallback für bekannte Wirkstoffe)
-// Wikipedia entfernt – hat keine Medikamenten-Packungsfotos!
+// KI-BILD-SUCHE: Produktfoto von shop-apotheke.com laden
+// Strategie: Claude besucht search.htm?q=Name DIREKT → CDN-URL extrahieren
+// CDN-Bilder (cdn.shop-apotheke.com) sind öffentlich ohne Hotlink-Schutz!
+// Phase 1: Claude besucht shop-apotheke direkt (braucht API-Key)
+// Phase 2: Wikimedia Commons (kostenlos, für bekannte Wirkstoffe)
 // ══════════════════════════════════════════════════════════════════
 
 // Prüft ob eine URL ein ladbares Bild liefert (img-Tag – kein CORS nötig)
@@ -697,31 +698,53 @@ const _IMG_EXT=/\.(jpg|jpeg|png|webp|gif)(\?|$)/i;
 // Packungsbegriffe → bevorzugen
 const _PACK_RE=/tablet|tablette|kapsel|capsule|pill|blister|packung|package|pack[^a]|dose|flasche|tube|ampulle|film|dragee|spray|salbe|cream|syrup|lösung|saft|tropfen|infusion|box|[_-]\d+mg[_.-]|\d+mg[_.-]/i;
 
-// ── Phase 1: Claude web_search → Apotheken-Websites ─────────────────
-// Sucht auf deutschen Apotheken-Sites nach Produktfotos
+// ── CDN-URL aus shop-apotheke-Antwort extrahieren ───────────────────
+// Findet URLs wie: cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
+// Upgradet automatisch auf 600x0 für bessere Qualität
+function _extractShopApothekenUrls(text){
+  const seen=new Set(),results=[];
+  // Spezifisches Regex für shop-apotheke CDN
+  const reCDN=/https?:\/\/cdn\.shop-apotheke\.com\/images\/[^\s"'<>()\[\]\\]+\.jpg/gi;
+  for(const m of text.matchAll(reCDN)){
+    const raw=m[0].replace(/[.,;)'"\\]+$/,"");
+    // 256x0 → 600x0 für bessere Auflösung
+    const url=raw.replace(/\/\d+x\d+\//,"/600x0/");
+    if(!seen.has(url)){seen.add(url);results.push(url);}
+  }
+  // Fallback: allgemeine Bild-URLs
+  const reGeneral=/https?:\/\/[^\s"'<>()\[\]\\]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>()\[\]\\]*)?/gi;
+  for(const m of text.matchAll(reGeneral)){
+    const u=m[0].replace(/[.,;)'"\\]+$/,"");
+    if(!seen.has(u)){seen.add(u);results.push(u);}
+  }
+  return results;
+}
+
+// ── Phase 1: Claude besucht shop-apotheke direkt ─────────────────────
+// WICHTIG: Claude wird angewiesen die DIREKTE URL zu besuchen, nicht Google
+// Die CDN-Bild-URLs stehen als img-src in der search.htm Seite
 async function _claudePharmacySearch(name,pzn,manufacturer,key){
   const nameBase=name.trim().split(/\s+/).slice(0,2).join(' ');
-  const pznHint=pzn?` (PZN ${pzn})`:'';
-  const mfrHint=manufacturer?` von ${manufacturer}`:'';
 
-  const prompt=`Du suchst das Produktfoto der deutschen Medikamentenpackung: "${name}"${pznHint}${mfrHint}
+  // Direkte shop-apotheke Suchanfragen (kein Google – die Seite selbst enthält CDN-URLs)
+  const searchByName=`https://www.shop-apotheke.com/search.htm?q=${encodeURIComponent(nameBase)}`;
+  const searchByPzn=pzn?`https://www.shop-apotheke.com/search.htm?q=${encodeURIComponent(pzn)}`:null;
 
-Führe diese Web-Suchen durch:
-1. Suche: "${nameBase} Packung" site:shop-apotheke.de
-2. Suche: "${nameBase} Produktbild" apotheke
-3. Falls PZN bekannt: PZN "${pzn}" apotheke Packung
+  const prompt=`Du brauchst das Produktbild für das Medikament "${name}".
 
-Besuche das Suchergebnis und extrahiere die direkte Bild-URL der Produktseite.
-Deutsche Apotheken-CDN-Muster (nach diesen URLs suchen):
-- cdn.shop-apotheke.com/images/...
-- img.medpex.de/...
-- cdn.aponeo.de/... oder bilder.aponeo.de/...
-- cdn.sanicare.de/...
-- img.apotheke.com/...
-- images.docmorris.de/...
+SCHRITT 1 – Besuche diese URL direkt (nicht Google, sondern die Seite selbst):
+${searchByName}
+${searchByPzn?`\nAlternativ auch: ${searchByPzn}`:''}
 
-Gib bis zu 5 direkte Bild-URLs aus (.jpg oder .png), eine pro Zeile.
-NUR die rohen URLs – keine Erklärung, kein Markdown.`;
+SCHRITT 2 – Suche auf der Seite nach Bild-URLs die so aussehen:
+https://cdn.shop-apotheke.com/images/256x0/D../.../.../...-p1.jpg
+
+Beispiel für eine gültige URL:
+https://cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
+
+SCHRITT 3 – Gib die ERSTEN 3 gefundenen URLs zurück, ersetze "256x0" durch "600x0".
+
+NUR die rohen URLs ausgeben, eine pro Zeile. KEINE Erklärung.`;
 
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -730,27 +753,44 @@ NUR die rohen URLs – keine Erklärung, kein Markdown.`;
         "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-haiku-4-5-20251001",
-        max_tokens:1024,
+        max_tokens:800,
         tools:[{type:"web_search_20250305",name:"web_search"}],
         messages:[{role:"user",content:prompt}]
       })
     });
-    if(!r.ok)return null;
+    if(!r.ok){
+      const err=await r.json().catch(()=>({}));
+      console.warn("pharmacySearch HTTP",r.status,err?.error?.message||"");
+      return null;
+    }
     const resp=await r.json();
-    // URLs aus ALLEN Antwort-Blöcken extrahieren (text + tool_result)
+    console.log("pharmacySearch response blocks:",
+      (resp.content||[]).map(c=>c.type).join(", "));
+
+    // URLs aus ALLEN Block-Typen extrahieren
     const allText=(resp.content||[]).map(c=>{
       if(c.type==="text")return c.text;
       if(c.type==="tool_result")return(c.content||[]).map(x=>x.text||"").join(" ");
+      // server_tool_use oder andere Block-Typen ebenfalls mitnehmen
+      if(c.input)return JSON.stringify(c.input);
       return"";
     }).join("\n");
-    if(!allText)return null;
-    const urls=_extractUrls(allText)
+
+    console.log("pharmacySearch extracted text (first 500):",allText.slice(0,500));
+
+    if(!allText.trim())return null;
+    const urls=_extractShopApothekenUrls(allText)
       .filter(u=>!_STRUCT_RE.test(u))
       .filter(u=>_IMG_EXT.test(u));
-    for(const url of urls){
-      if(await _imgLoads(url,8000))return url;
+
+    console.log("pharmacySearch candidate URLs:",urls.slice(0,5));
+
+    for(const url of urls.slice(0,8)){
+      const ok=await _imgLoads(url,8000);
+      console.log("  _imgLoads",url.slice(0,70),"→",ok);
+      if(ok)return url;
     }
-  }catch(e){console.warn("claudePharmacySearch:",e);}
+  }catch(e){console.warn("pharmacySearch error:",e);}
   return null;
 }
 
@@ -4425,7 +4465,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-018 · 29.04.2026";
+window._buildTime="SaDro-019 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
