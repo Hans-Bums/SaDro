@@ -696,16 +696,35 @@ const _IMG_EXT=/\.(jpg|jpeg|png|webp|gif)(\?|$)/i;
 // Packungsbegriffe → bevorzugen
 const _PACK_RE=/tablet|tablette|kapsel|capsule|pill|blister|packung|package|pack[^a]|dose|flasche|tube|ampulle|film|dragee|spray|salbe|cream|syrup|lösung|saft|tropfen|infusion|box|[_-]\d+mg[_.-]|\d+mg[_.-]/i;
 
+// ── PZN aus CDN-URL extrahieren ───────────────────────────────────────
+// CDN-Format: cdn.shop-apotheke.com/images/D02/009/517/D02009517-p1.jpg
+// → PZN = "02009517"  (die letzten 8 Ziffern vor "-p")
+function _pznFromCdnUrl(url){
+  const m=url.match(/\/D(\d{2})\/(\d{3})\/(\d{3})\/D\d{8}-p/i);
+  return m?m[1]+m[2]+m[3]:null;
+}
+
 // ── Phase 1: shop-apotheke.com über CORS-Proxy ───────────────────────
 // api.codetabs.com leitet den Request server-seitig weiter → kein CORS-Problem
 // CDN-Bilder (cdn.shop-apotheke.com) sind frei ladbar (kein Hotlink-Schutz)
-async function _shopApothekeSearch(name,pzn){
+// Gibt {url,pzn} zurück oder null
+async function _shopApothekeSearch(name,pzn,strength,manufacturer){
   const words=name.trim().split(/\s+/);
-  // Suchreihenfolge: PZN (präziseste), Wirkstoff, vollständiger Name
+  const nameShort=words.slice(0,2).join(' ');
+  const str=strength?strength.replace(/\s/g,''):'';  // "10 mg" → "10mg"
+
+  // Suchreihenfolge: spezifischste zuerst
+  // 1. PZN (eindeutig, falls bekannt)
+  // 2. Name + Stärke + Hersteller (vollständige Kombination)
+  // 3. Name + Stärke
+  // 4. Name allein (Fallback)
+  const comboParts=[words[0],str,manufacturer].filter(Boolean).join(' ');
+  const withStrength=[words[0],str].filter(Boolean).join(' ');
   const queries=[
     pzn,
-    words[0],
-    words.slice(0,2).join(' '),
+    comboParts!==withStrength?comboParts:null,
+    str?withStrength:null,
+    nameShort,
   ].filter((v,i,a)=>v&&a.indexOf(v)===i);
 
   const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
@@ -732,8 +751,17 @@ async function _shopApothekeSearch(name,pzn){
       }
       console.log('shopApotheke query="'+query+'" →',urls.length,'CDN-URLs');
 
+      // Auch PZN direkt aus dem HTML-Text extrahieren (z.B. "PZN: 12345678")
+      let htmlPzn=null;
+      const pznMatch=html.match(/\bPZN[:\s]*(\d{8})\b/i);
+      if(pznMatch)htmlPzn=pznMatch[1];
+
       for(const url of urls.slice(0,8)){
-        if(await _imgLoads(url,6000))return url;
+        if(await _imgLoads(url,6000)){
+          // PZN aus CDN-URL extrahieren (höchste Priorität)
+          const cdnPzn=_pznFromCdnUrl(url)||htmlPzn;
+          return{url,pzn:cdnPzn};
+        }
       }
     }catch(e){console.warn('shopApotheke['+query+']:',e.message||e);}
   }
@@ -824,6 +852,16 @@ async function _tryWikimediaCommons(name){
   return null;
 }
 
+// PZN in Medikament speichern (wenn noch nicht gesetzt)
+function _applyMedPzn(medId,pzn){
+  if(!pzn||!/^\d{8}$/.test(pzn))return;
+  const med=meds.find(m=>m.id===medId);
+  if(!med||med.pzn)return; // nicht überschreiben wenn schon vorhanden
+  meds=meds.map(m=>m.id===medId?{...m,pzn,pznStatus:"ok",pznChecked:td()}:m);
+  save();
+  console.log('PZN aus CDN-URL ermittelt:',pzn,'für',med.name);
+}
+
 // Gibt true zurück wenn Foto gefunden + gespeichert, sonst false
 async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
@@ -838,11 +876,19 @@ async function fetchMedImageFromWeb(medId,force=false){
 
   const name=med.name||"";
   const pzn=med.pzn||"";
+  const strength=med.strength||"";
+  const manufacturer=med.manufacturer||"";
 
   // ── Phase 1: CORS-Proxy → shop-apotheke.com (kein API-Key nötig) ──
+  // Nutzt Stärke + Hersteller für präzise Suche → findet genau DAS Produkt
+  // Extrahiert PZN aus CDN-URL und speichert sie automatisch
   try{
-    const shopUrl=await _shopApothekeSearch(name,pzn);
-    if(shopUrl){_applyMedPhoto(medId,shopUrl,force,force);return true;}
+    const res=await _shopApothekeSearch(name,pzn,strength,manufacturer);
+    if(res&&res.url){
+      _applyMedPhoto(medId,res.url,force,force);
+      if(res.pzn)_applyMedPzn(medId,res.pzn); // PZN automatisch eintragen
+      return true;
+    }
   }catch(e){console.warn("fetchMedImage Phase1:",e);}
 
   // ── Phase 2: Wikimedia Commons (kein API-Key nötig) ───────────────
@@ -4446,7 +4492,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-020 · 29.04.2026";
+window._buildTime="SaDro-021 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
