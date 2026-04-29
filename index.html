@@ -91,7 +91,7 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .med-row{padding:10px 13px;display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid var(--border);}
 .med-row:last-child{border-bottom:none;}
 .med-thumb{min-width:60px;max-width:120px;width:72px;height:72px;border-radius:10px;background:var(--faint);display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;overflow:hidden;}
-.med-thumb img{width:100%;height:100%;object-fit:contain;background:#000;}
+.med-thumb img{width:100%;height:100%;object-fit:contain;background:var(--surface);}
 /* ── Ein/Aus-Schalter (Toggle) ── */
 .toggle{width:40px;height:22px;border-radius:11px;position:relative;cursor:pointer;transition:background .2s;flex-shrink:0;border:none;}
 .toggle-knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.2);}
@@ -633,45 +633,40 @@ function handleAIErr(e){
 
 // ══════════════════════════════════════════════════════════════════
 // KI-BILD-SUCHE: Produktfoto aus dem Internet laden
-// Phase 1: PZN-basierte CDN-Muster (kostenlos, kein API-Call)
-// Phase 2: Claude web_search mit besserem Prompt (1 API-Call)
-// Phase 3: Validierung – URL wird mit Image() getestet vor dem Speichern
+// Strategie: Claude web_search sucht og:image von Produktseite
+// Validierung: Image()-Test vor dem Speichern
 // ══════════════════════════════════════════════════════════════════
 
-// Prüft ob eine URL wirklich ein ladbares Bild ist (kein HTML/404)
-async function _imgLoads(url,timeout=4000){
+// Prüft ob eine URL wirklich ein ladbares Bild liefert (kein HTML/404)
+async function _imgLoads(url,timeout=5000){
   return new Promise(res=>{
     const img=new Image();
+    img.crossOrigin="anonymous";
     const t=setTimeout(()=>{img.src="";res(false);},timeout);
-    img.onload=()=>{clearTimeout(t);res(true);};
+    img.onload=()=>{clearTimeout(t);res(img.naturalWidth>0);};
     img.onerror=()=>{clearTimeout(t);res(false);};
     img.src=url;
   });
 }
 
-// Phase 1: Bekannte CDN-Muster für deutsche Apotheken mit PZN ausprobieren
-async function _tryPZNCDNPatterns(pzn){
-  const p=pzn.replace(/\D/g,"").padStart(8,"0");
-  const patterns=[
-    // shop-apotheke.com CDN
-    `https://media.shop-apotheke.com/pimage/${p}-1.jpg`,
-    `https://media.shop-apotheke.com/pimage/${p}.jpg`,
-    // DocMorris / ZurRose
-    `https://img.docmorris.de/product/${p}.jpg`,
-    `https://image.docmorris.de/images/products/${p}/big.jpg`,
-    // aponeo.de
-    `https://cdn.aponeo.de/product-images/pzn-${p}.jpg`,
-    `https://cdn.aponeo.de/product-images/${p}_1.jpg`,
-    // mein-apothekenmanager
-    `https://www.apotheken-umschau.de/img/pzn/${p}.jpg`,
-  ];
-  for(const url of patterns){
-    if(await _imgLoads(url,3000))return url;
+// Alle http(s)-URLs aus einem Text extrahieren und deduplizieren
+function _extractUrls(text){
+  const seen=new Set();
+  const results=[];
+  // Bild-Extension am Ende (jpg/jpeg/png/webp/gif)
+  const re1=/https?:\/\/[^\s"'<>()\[\]]+\.(?:jpg|jpeg|png|webp|gif)(?:[?#][^\s"'<>()\[\]]*)?/gi;
+  // CDN-Domains auch ohne Extension
+  const re2=/https?:\/\/(?:cdn|media|img|images|static|assets|pimage|content|picture)[^\s"'<>()\[\]]{8,}/gi;
+  for(const re of[re1,re2]){
+    for(const m of text.matchAll(re)){
+      const u=m[0].replace(/[.,;:)>\]'"]+$/,"");
+      if(u.startsWith("http")&&!seen.has(u)){seen.add(u);results.push(u);}
+    }
   }
-  return null;
+  return results;
 }
 
-// Gefundene URL ins Med-Objekt speichern (silent=true unterdrückt Toast – Aufrufer zeigt eigenen)
+// Gefundene URL ins Med-Objekt speichern (silent=true: kein Toast – Aufrufer zeigt eigenen)
 function _applyMedPhoto(medId,imgUrl,force,silent=false){
   const m=meds.find(x=>x.id===medId);if(!m)return;
   const keep=(m.photos||[]).filter(p=>p&&typeof p==='string'&&p.startsWith('data:'));
@@ -681,59 +676,74 @@ function _applyMedPhoto(medId,imgUrl,force,silent=false){
     meds=meds.map(x=>x.id===medId?{...x,photo:imgUrl,photoIsUrl:true,photos:keep.length>0?[...keep,imgUrl]:[imgUrl]}:x);
   }
   save();if(currentView==="list")renderList();
-  if(!silent)toast("📸 Online-Foto für "+m.name+" verknüpft","ok");
+  if(!silent)toast("📸 Foto für "+m.name+" verknüpft","ok");
 }
 
-// Gibt true zurück wenn ein Foto gefunden + gespeichert wurde, sonst false
+// ── Einen Bildsuch-Prompt an Claude senden und erste gültige URL zurückgeben ──
+async function _claudeImageSearch(prompt,key){
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":key,
+      "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({
+      model:"claude-haiku-4-5-20251001",
+      max_tokens:1024,
+      tools:[{type:"web_search_20250305",name:"web_search"}],
+      messages:[{role:"user",content:prompt}]
+    })
+  });
+  if(!r.ok)return null;
+  const resp=await r.json();
+  // Alle Text-Blöcke zusammenführen (Claude antwortet nach Tool-Ausführung)
+  const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join(" ").trim();
+  if(!text)return null;
+  const urls=_extractUrls(text);
+  for(const url of urls){
+    if(await _imgLoads(url,6000))return url;
+  }
+  return null;
+}
+
+// Gibt true zurück wenn Foto gefunden + gespeichert, sonst false
 async function fetchMedImageFromWeb(medId,force=false){
   const med=meds.find(m=>m.id===medId);
   if(!med)return false;
+
+  // Guard: nicht suchen wenn bereits ein Foto vorhanden (außer force=true)
   if(!force){
-    if(med.photoIsUrl&&med.photo)return true; // schon vorhanden
-    const _hasCam=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('data:'));
-    const _hasUrl=(med.photos||[]).some(p=>p&&typeof p==='string'&&p.startsWith('http'));
-    if(_hasCam&&_hasUrl)return true; // schon vollständig
+    if(med.photoIsUrl&&med.photo)return true;
+    const hasCam=(med.photos||[]).some(p=>p?.startsWith('data:'));
+    const hasUrl=(med.photos||[]).some(p=>p?.startsWith('http'));
+    if(hasCam&&hasUrl)return true;
   }
+
   const key=(apiKey||LS.get("sdro_k")||"").trim();
-
-  // ── Phase 1: PZN-CDN-Muster (kostenlos, kein API-Call) ──────────
-  if(med.pzn){
-    const cdnUrl=await _tryPZNCDNPatterns(med.pzn);
-    if(cdnUrl){_applyMedPhoto(medId,cdnUrl,force,force/*silent wenn manuell*/);return true;}
-  }
-
-  // ── Phase 2: Claude web_search ───────────────────────────────────
   if(!key||!key.startsWith("sk-ant-"))return false;
+
+  const name=med.name||"";
+  const pzn=med.pzn?"PZN "+med.pzn:"";
+  const hst=med.manufacturer?", "+med.manufacturer:"";
+
+  // ── Suchanfrage 1: shop-apotheke.com Produktseite → og:image ─────
   try{
-    const r=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({
-        model:"claude-haiku-4-5-20251001",max_tokens:600,
-        tools:[{type:"web_search_20250305",name:"web_search"}],
-        messages:[{role:"user",content:`Suche nach einem Produktbild für das deutsche Medikament "${med.name}"${med.pzn?" (PZN "+med.pzn+")":""}${med.manufacturer?" von "+med.manufacturer:""}.
-Durchsuche shop-apotheke.com, aponeo.de oder docmorris.de.
-Gib NUR die direkte URL der Produktbilddatei zurück (endet auf .jpg, .jpeg, .png oder .webp).
-Kein Text davor oder danach – ausschließlich die nackte URL.`}]
-      })
-    });
-    if(!r.ok)return false;
-    const resp=await r.json();
-    const text=resp.content.filter(c=>c.type==="text").map(c=>c.text).join("").trim();
+    const q1=`Suche auf shop-apotheke.com nach dem Medikament "${name}" ${pzn}${hst}.
+Öffne die Produktseite und lies den <meta property="og:image"> Tag aus.
+Gib ausschließlich die vollständige Bild-URL zurück – kein anderer Text.`;
+    const url1=await _claudeImageSearch(q1,key);
+    if(url1){_applyMedPhoto(medId,url1,force,force);return true;}
+  }catch{}
 
-    // Nur direkte Bild-URLs akzeptieren (mit Bild-Extension oder bekannten CDN-Domains)
-    const byExt=text.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)(?:[?#][^\s"'<>]*)?/i);
-    const byCDN=text.match(/https?:\/\/(?:media|cdn|img|image|images|static|assets)\.[^\s"'<>]{15,}/i);
-    const rawUrl=(byExt?.[0]||byCDN?.[0]||"").replace(/[.,;)>]+$/,"");
-    if(!rawUrl||!rawUrl.startsWith("http"))return false;
+  // ── Suchanfrage 2: Breitere Suche auf mehreren Apotheken ─────────
+  try{
+    const q2=`Finde ein Produktfoto für das deutsche Medikament "${name}" ${pzn}${hst}.
+Suche auf aponeo.de, docmorris.de oder medpex.de.
+Öffne die erste Produktseite und extrahiere die direkte Bild-URL (og:image oder erster <img>-Tag des Produktfotos).
+Antworte nur mit der URL.`;
+    const url2=await _claudeImageSearch(q2,key);
+    if(url2){_applyMedPhoto(medId,url2,force,force);return true;}
+  }catch{}
 
-    // ── Phase 3: URL validieren – lädt sie wirklich als Bild? ────────
-    const valid=await _imgLoads(rawUrl,5000);
-    if(!valid){console.warn("fetchMedImageFromWeb: URL lädt nicht als Bild:",rawUrl);return false;}
-
-    _applyMedPhoto(medId,rawUrl,force,force/*silent wenn manuell*/);
-    return true;
-  }catch(e){console.warn("fetchMedImageFromWeb:",e);return false;}
+  return false;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1674,7 +1684,7 @@ function renderList(){
         const thumbHtml=_dp
           ?`<img src="${_dp}" onclick="showPhotoModal('${med.id}')"
               onerror="_thumbImgErr(this,'${med.id}','${g.emoji}')"
-              style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:cover;border:2px solid var(--border);background:#111;flex-shrink:0"/>`
+              style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:contain;border:2px solid var(--border);background:var(--surface);flex-shrink:0"/>`
           :`<div class="med-thumb" onclick="openMedActions('${med.id}')" style="cursor:pointer;border:2px dashed var(--border);position:relative" title="Kein Foto – klicken für Optionen">
               <span style="font-size:24px">${g.emoji}</span>
               <div style="position:absolute;bottom:2px;right:2px;background:var(--accent);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700">+</div>
@@ -1780,7 +1790,7 @@ function renderPhotoGallery(){
     ${total>1?`<div style="display:flex;gap:6px;justify-content:center;margin-bottom:10px;overflow-x:auto">
       ${photos.map((p,i)=>{const isMain=(window._mainPhotoIdx||0)===i;const isActive=idx===i;
         return`<div style="position:relative;flex-shrink:0">
-          <img src="${p}" onclick="window._photoIdx=${i};window._photoRot=0;renderPhotoGallery()" style="width:50px;height:50px;object-fit:cover;border-radius:6px;cursor:pointer;border:3px solid ${isActive?"var(--accent)":isMain?"var(--green)":"var(--border)"};background:#000"/>
+          <img src="${p}" onclick="window._photoIdx=${i};window._photoRot=0;renderPhotoGallery()" style="width:50px;height:50px;object-fit:contain;border-radius:6px;cursor:pointer;border:3px solid ${isActive?"var(--accent)":isMain?"var(--green)":"var(--border)"};background:var(--surface)"/>
           ${isMain?`<div style="position:absolute;top:-4px;right:-4px;background:var(--green);color:#fff;border-radius:50%;width:15px;height:15px;font-size:9px;display:flex;align-items:center;justify-content:center;border:2px solid white">★</div>`:`<button onclick="setMainPhoto(${i})" style="position:absolute;top:-4px;right:-4px;background:var(--faint);border-radius:50%;width:15px;height:15px;font-size:9px;border:none;cursor:pointer;padding:0">☆</button>`}
         </div>`;}).join("")}
     </div>`:""}
@@ -2060,7 +2070,7 @@ NUR JSON: {"isMedical":true,"results":[{"name":"exakter Name","reason":"med. Beg
       const g=groups.find(x=>x.id===m.groupId);
       const _sdp=getDisplayPhoto(m);
       const thumb=_sdp
-        ?`<img src="${_sdp}" alt="" style="width:72px;height:72px;border-radius:10px;object-fit:cover;background:#111;flex-shrink:0" onerror="this.style.display='none'"/>`
+        ?`<img src="${_sdp}" alt="" style="width:72px;height:72px;border-radius:10px;object-fit:contain;background:var(--surface);flex-shrink:0" onerror="this.style.display='none'"/>`
         :g?`<div class="med-thumb">${h(g.emoji)}</div>`:`<div class="med-thumb">💊</div>`;
       const empty=m.count===0&&(m.totalPills===0||m.totalPills==null);
       const realTotal=m.totalPills!=null?m.totalPills:(m.pillsPerBlister&&m.count?m.count*m.pillsPerBlister:null);
@@ -2882,7 +2892,7 @@ function renderAddModal(med){
       <div style="margin-bottom:12px">
         <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fotos (${(med.photos&&med.photos.length)||1}) <button onclick="showPhotoModal('${med.id}')" style="border:none;background:none;color:var(--accent);font-size:11px;cursor:pointer;font-weight:600">Bearbeiten ›</button></div>
         <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
-          ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||i===0);return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}')" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:#000"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
+          ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||i===0);return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}')" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:var(--surface)"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
           <div onclick="switchTab('photo')" style="width:56px;height:56px;border-radius:8px;border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;flex-shrink:0;color:var(--muted)" title="Foto hinzufügen">+</div>
         </div>
       </div>`:""}
@@ -3058,7 +3068,7 @@ async function takePhoto(){
 // Foto-Vorschau-Streifen aktualisieren
 function updateThumbs(){
   const row=document.getElementById("thumb-row");if(!row)return;
-  row.innerHTML=_camPhotos.map((p,i)=>`<div style="position:relative;flex-shrink:0"><img src="${p}" style="width:52px;height:52px;border-radius:7px;object-fit:cover;border:2px solid var(--accent);background:#000"/><button style="position:absolute;top:-4px;right:-4px;width:17px;height:17px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center" onclick="removePhoto(${i})">✕</button></div>`).join("");
+  row.innerHTML=_camPhotos.map((p,i)=>`<div style="position:relative;flex-shrink:0"><img src="${p}" style="width:52px;height:52px;border-radius:7px;object-fit:contain;border:2px solid var(--accent);background:var(--surface)"/><button style="position:absolute;top:-4px;right:-4px;width:17px;height:17px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center" onclick="removePhoto(${i})">✕</button></div>`).join("");
 }
 function removePhoto(i){_camPhotos=_camPhotos.filter((_,j)=>j!==i);updateThumbs();if(!_camPhotos.length)document.getElementById("analyse-btn").style.display="none";}
 
@@ -3865,7 +3875,7 @@ function _renderFavsModal(q){
       nonFavResults.slice(0,5).forEach(m=>{
         const g=groups.find(x=>x.id===m.groupId);
         html+=`<div class="card" style="padding:8px 12px;margin-bottom:6px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:20px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:20px;flex-shrink:0">💊</span>'}
+          ${m.photo?`<img src="${m.photo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;flex-shrink:0;background:var(--surface)" onerror="this.style.display='none'"/>`:g?`<span style="font-size:20px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:20px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0;font-size:13px;font-weight:600">${h(m.name)}</div>
           <button class="btn btn-sm btn-primary" onclick="toggleFav('${m.id}');_renderFavsModal('${h(q)}')">⭐ Favorit</button>
         </div>`;
@@ -3884,7 +3894,7 @@ function _renderFavsModal(q){
         const g=groups.find(x=>x.id===m.groupId);
         const isEmpty=(m.count===0&&(m.totalPills===null||m.totalPills===0));
         html+=`<div class="card" style="padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
-          ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:#000" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
+          ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:var(--surface)" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(m.name)}${m.strength?" · "+h(m.strength):""}</div>
             ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':`<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>`}
@@ -4217,7 +4227,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-013 · 28.04.2026";
+window._buildTime="SaDro-015 · 29.04.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
