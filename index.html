@@ -272,43 +272,110 @@ function initFirebase(){
 }
 
 // Echtzeit-Listener: Änderungen anderer Geräte sofort empfangen
+// ── SYNC-MERGE: Cloud + Lokal zusammenführen – KEIN Datenverlust ────
+// Cloud-Daten sind die Wahrheit. Lokal-only Items (noch nicht hochgeladen)
+// werden ergänzt. Bei gleicher ID gewinnt immer die Cloud-Version.
+function _mergeMeds(cloudMeds,localMeds){
+  const result=[...(cloudMeds||[])];
+  const cloudIds=new Set(result.map(m=>m.id));
+  for(const lm of(localMeds||[])){
+    if(!cloudIds.has(lm.id))result.push(lm); // Nur lokal vorhanden → ergänzen
+  }
+  return result;
+}
+function _mergeGroups(cloudGrps,localGrps){
+  const result=[...(cloudGrps||[])];
+  const cloudIds=new Set(result.map(g=>g.id));
+  for(const lg of(localGrps||[])){
+    if(!cloudIds.has(lg.id))result.push(lg);
+  }
+  return result;
+}
+
+// Flag: verhindert Auto-Push während des ersten Sync-Vorgangs
+let _initialSyncDone=false;
+
 function startFirebaseListener(){
   if(_fbListening||!initFirebase())return;
   _fbListening=true;
-  _fbDb.ref("/sadro").keepSynced(true); // Verbindung aufrecht erhalten
+  _fbDb.ref("/sadro").keepSynced(true);
+  const lbl=()=>document.getElementById("sync-lbl");
+  if(lbl()){lbl().style.color="var(--amber)";lbl().textContent="☁️ Sync...";}
   _fbDb.ref("/sadro").on("value",snap=>{
     const p=snap.val();
-    if(!p||!p.ts)return;
+    if(!p){
+      // Keine Cloud-Daten → erste Nutzung, lokale Daten hochladen
+      _initialSyncDone=true;
+      if(meds.length>0){setTimeout(syncPush,1000);}
+      if(lbl()){lbl().style.color="var(--muted)";lbl().textContent="Neu";}
+      return;
+    }
     const lastTs=LS.get("sdro_sync_ts");
-    // Timestamp-Check nur überspringen wenn exakt gleich (gleicher Push von diesem Gerät)
-    if(lastTs&&p.ts===lastTs)return;
-    if(p.meds)meds=p.meds;
-    if(p.groups)groups=p.groups;
+    // Nur überspringen wenn dieser Timestamp von UNS stammt UND schon fertig geladen
+    if(lastTs&&p.ts&&p.ts===lastTs&&_initialSyncDone)return;
+
+    // Welche lokalen Einträge sind NOCH NICHT in der Cloud?
+    const localOnlyMeds=(meds||[]).filter(m=>!(p.meds||[]).find(cm=>cm.id===m.id));
+    const localOnlyGrps=(groups||[]).filter(g=>!(p.groups||[]).find(cg=>cg.id===g.id));
+
+    // MERGE: Cloud-Basis + lokal-only ergänzen
+    meds=_mergeMeds(p.meds,meds);
+    groups=_mergeGroups(p.groups,groups);
     if(p.users){
       users=p.users;
       LS.set("sdro_users",users);
-      // currentUserId nur anpassen wenn nicht mehr vorhanden
       if(!users.find(u=>u.id===currentUserId)){
         currentUserId=users[0]?.id||"u1";
         LS.set("sdro_curuser",currentUserId);
       }
     }
     if(p.log)LS.set("sdro_log",p.log);
+    // Direkt in LS schreiben – KEIN save() um Auto-Push zu verhindern!
     LS.set("sdro_m",meds);LS.set("sdro_g",groups);LS.set("sdro_users",users);
-    LS.set("sdro_sync_ts",p.ts);
-    const el=document.getElementById("sync-lbl");
-    if(el){el.style.color="var(--green)";el.textContent="✓ Synchron";}
+    LS.set("sdro_sync_ts",p.ts||new Date().toISOString());
+    _initialSyncDone=true;
+    if(lbl()){lbl().style.color="var(--green)";lbl().textContent="✓ Synchron";}
     if(currentView==="list")renderList();
     else if(currentView==="settings")renderSettings();
     updateUserIndicator();
+    // Lokal-only Einträge jetzt in Cloud hochladen (Merge vollständig)
+    if(localOnlyMeds.length>0||localOnlyGrps.length>0){
+      console.log('Sync-Merge: '+localOnlyMeds.length+' neue Meds + '+localOnlyGrps.length+' Gruppen hochladen');
+      setTimeout(syncPush,2000);
+    }
   },err=>{
     console.warn("Firebase listener:",err);
-    const el=document.getElementById("sync-lbl");
-    if(el){el.style.color="var(--red)";el.textContent="Offline";}
+    _initialSyncDone=true;
+    if(lbl()){lbl().style.color="var(--red)";lbl().textContent="Offline";}
   });
 }
 
-// Daten hochladen
+// Sicheres manuelles Hochladen – prüft ob Cloud-Daten neuer sind
+async function syncPushSafe(){
+  if(!initFirebase())return;
+  try{
+    const snap=await _fbDb.ref("/sadro/ts").get();
+    const cloudTs=snap.val();
+    const localTs=LS.get("sdro_sync_ts");
+    if(cloudTs&&localTs&&cloudTs>localTs){
+      // Cloud ist neuer → erst laden, dann erst hochladen anbieten
+      openModal(`<div style="font-size:16px;font-weight:700;margin-bottom:12px">⚠️ Cloud hat neuere Daten</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+          Ein anderes Gerät hat Daten hochgeladen die du noch nicht hast.<br>
+          <b style="color:var(--red)">Hochladen würde diese Daten überschreiben!</b>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-primary btn-full" onclick="closeModal();syncPull()">⬇️ Zuerst Cloud-Daten laden (empfohlen)</button>
+          <button class="btn btn-full" style="background:var(--redlo);color:var(--red)" onclick="closeModal();syncPush()">⚠️ Trotzdem hochladen (Daten werden überschrieben)</button>
+          <button class="btn btn-full" onclick="closeModal()">Abbrechen</button>
+        </div>`,"center-overlay");
+      return;
+    }
+  }catch{}
+  syncPush();
+}
+
+// Daten hochladen – setzt aktuelle meds/groups/users in Firebase
 async function syncPush(){
   if(!initFirebase()){toast("Firebase nicht verfügbar","warn");return;}
   if(_syncRunning)return;_syncRunning=true;
@@ -325,7 +392,7 @@ async function syncPush(){
   }finally{_syncRunning=false;}
 }
 
-// Manuell laden (für Refresh-Button)
+// Manuell laden – merged sicher, überschreibt NIE blind
 async function syncPull(){
   if(!initFirebase()){toast("Firebase nicht verfügbar","warn");return;}
   const el=document.getElementById("sync-lbl");
@@ -333,28 +400,42 @@ async function syncPull(){
   try{
     const snap=await _fbDb.ref("/sadro").get();
     const p=snap.val();
-    if(!p){toast("Noch keine Daten in Firebase","info");if(el){el.style.color="var(--muted)";el.textContent="Leer";}return;}
-    if(p.meds)meds=p.meds;
-    if(p.groups)groups=p.groups;
-    if(p.users)users=p.users;
+    if(!p){toast("Noch keine Daten in der Cloud","info");if(el){el.style.color="var(--muted)";el.textContent="Leer";}return;}
+    // MERGE – nicht ersetzen
+    meds=_mergeMeds(p.meds,meds);
+    groups=_mergeGroups(p.groups,groups);
+    if(p.users){users=p.users;if(!users.find(u=>u.id===currentUserId)){currentUserId=users[0]?.id||"u1";LS.set("sdro_curuser",currentUserId);}}
     if(p.log)LS.set("sdro_log",p.log);
-    save();LS.set("sdro_sync_ts",p.ts||new Date().toISOString());
+    // KEIN save() → kein Auto-Push nach Pull!
+    LS.set("sdro_m",meds);LS.set("sdro_g",groups);LS.set("sdro_users",users);
+    LS.set("sdro_sync_ts",p.ts||new Date().toISOString());
+    _initialSyncDone=true;
     if(currentView==="list")renderList();else if(currentView==="settings")renderSettings();
     updateUserIndicator();
-    if(el){el.style.color="var(--green)";el.textContent="✓ Geladen";}
-    toast(`☁️ ${p.meds?.length||0} Medikamente geladen`,"ok");
+    if(el){el.style.color="var(--green)";el.textContent="✓ Synchron";}
+    toast(`☁️ Synchronisiert · ${meds.length} Medikamente`,"ok");
   }catch(e){
     if(el){el.style.color="var(--red)";el.textContent="Fehler";}
-    toast("Laden fehlgeschlagen: "+e.message,"warn");
+    toast("Sync fehlgeschlagen: "+e.message,"warn");
   }
 }
 
-// Firebase starten sobald SDK geladen – Daten bei Start synchronisieren
+// Firebase starten – SOFORT beim Laden, Listener hat Priorität
 setTimeout(()=>{
-  if(initFirebase()){startFirebaseListener();setTimeout(()=>syncPull(),800);}
-  else{setTimeout(()=>{if(initFirebase()){startFirebaseListener();setTimeout(()=>syncPull(),800);}},2000);}
-},500);
-// Echtzeit-Sync: Bei Tab-Fokus Daten abrufen
+  if(initFirebase()){
+    startFirebaseListener();
+    // Fallback: Falls Listener nach 4s noch nicht gefeuert → manuell ziehen
+    setTimeout(()=>{if(!_initialSyncDone){console.log("Sync-Fallback");syncPull();}},4000);
+  }else{
+    setTimeout(()=>{
+      if(initFirebase()){
+        startFirebaseListener();
+        setTimeout(()=>{if(!_initialSyncDone)syncPull();},4000);
+      }else{_initialSyncDone=true;} // Kein Firebase → Offline-Modus
+    },2000);
+  }
+},300);
+// Echtzeit-Sync: App wieder im Vordergrund → sofort aktualisieren
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&typeof _fbDb!=="undefined"&&_fbDb){syncPull();}});
 
 // Falls kein User existiert, Standarduser anlegen (KEIN syncPush – Firebase überschreibt gleich)
@@ -465,7 +546,8 @@ function toggleFav(id){favs=isFav(id)?favs.filter(x=>x!==id):[...favs,id];LS.set
 
 // ── Speichern aller Daten in localStorage ──
 function save(){LS.set("sdro_g",groups);LS.set("sdro_m",meds);LS.set("sdro_c",cfg);
-  // Firebase: Daten nach jeder Änderung hochladen (5s debounce)
+  // Firebase-Upload nur NACH dem ersten Sync – nicht während des initialen Ladens!
+  if(!_initialSyncDone)return;
   clearTimeout(window._autoSyncTimer);
   window._autoSyncTimer=setTimeout(syncPush,5000);
 }
@@ -874,6 +956,8 @@ async function fetchMedImageFromWeb(medId,force=false){
     if(hasCam&&hasUrl)return true;
   }
 
+  // "x" im PZN-Feld = Nutzer will keine Suche
+  if(med.pznSkip)return false;
   const name=med.name||"";
   const pzn=med.pzn||"";
   const strength=med.strength||"";
@@ -881,13 +965,20 @@ async function fetchMedImageFromWeb(medId,force=false){
 
   // ── Phase 1: CORS-Proxy → shop-apotheke.com (kein API-Key nötig) ──
   // Nutzt Stärke + Hersteller für präzise Suche → findet genau DAS Produkt
-  // Extrahiert PZN aus CDN-URL und speichert sie automatisch
+  // PZN-Verifikation: wenn Medikament eine PZN hat, muss das Bild passen!
   try{
     const res=await _shopApothekeSearch(name,pzn,strength,manufacturer);
     if(res&&res.url){
-      _applyMedPhoto(medId,res.url,force,force);
-      if(res.pzn)_applyMedPzn(medId,res.pzn); // PZN automatisch eintragen
-      return true;
+      // PZN-Prüfung: CDN-PZN muss mit Medikament-PZN übereinstimmen (wenn bekannt)
+      const pznOk=!pzn||!res.pzn||res.pzn===String(pzn).padStart(8,"0")||String(pzn).padStart(8,"0")===res.pzn;
+      if(!pznOk){
+        console.warn('PZN-Konflikt: Medikament='+pzn+' Bild-CDN='+res.pzn+' → Bild abgelehnt');
+        // Weiter zu Phase 2 statt falsches Bild zu speichern
+      }else{
+        _applyMedPhoto(medId,res.url,force,force);
+        if(res.pzn)_applyMedPzn(medId,res.pzn);
+        return true;
+      }
     }
   }catch(e){console.warn("fetchMedImage Phase1:",e);}
 
@@ -915,19 +1006,45 @@ async function fetchMedImageFromWeb(medId,force=false){
 // ══════════════════════════════════════════════════════════════════
 async function autoGroup(name){
   if(!name)return null;
-  // Prüfen ob Gruppe schon existiert
-  const ex=groups.find(g=>g.name.toLowerCase()===name.toLowerCase()||g.name.toLowerCase().includes(name.toLowerCase().split(" ")[0]));
+  const nl=name.toLowerCase().trim();
+  const words=nl.split(/[\s&\/]+/).filter(w=>w.length>2);
+  // 1. Exakter Treffer
+  let ex=groups.find(g=>g.name.toLowerCase()===nl);
+  // 2. Vorhandene Gruppe die alle Kernwörter enthält (oder umgekehrt)
+  if(!ex)ex=groups.find(g=>{
+    const gl=g.name.toLowerCase();
+    return words.length>0&&words.every(w=>gl.includes(w));
+  });
+  // 3. Vorhandene Gruppe die mind. das erste Hauptwort enthält
+  if(!ex&&words.length>0)ex=groups.find(g=>g.name.toLowerCase().includes(words[0]));
   if(ex)return ex;
+  // 4. KI wählt aus BESTEHENDEN Gruppen oder schlägt neue vor (keine Duplikate!)
+  const existingNames=groups.map(g=>g.name).join(", ");
   try{
-    const raw=await callAI([{role:"user",content:`Medikamentengruppe: "${name}". Wähle passendes Emoji. NUR JSON: {"emoji":"passendes medizinisches Emoji"}`}],50);
+    const prompt=`Medikament: "${name}".
+Bestehende Gruppen: ${existingNames||"(keine)"}.
+Passt das Medikament in eine bestehende Gruppe? Wenn ja, gib exakt den Gruppennamen zurück.
+Wenn keine passt, schlage EINEN neuen deutschen Gruppennamen vor (max 20 Zeichen, z.B. "Schmerzmittel").
+NUR JSON: {"group":"Gruppenname","emoji":"🏥","isNew":true}`;
+    const raw=await callAI([{role:"user",content:prompt}],80);
     const meta=parseJ(raw);
-    // Einzigartige Farbe wählen – keine bereits verwendete Farbe
-    const ng={id:genId(),name,color:getUniqueColor(),emoji:meta.emoji||"💊"};
-    groups.push(ng);save();toast(`Gruppe „${name}" erstellt`,"info");return ng;
-  }catch{
-    const ng={id:genId(),name,color:getUniqueColor(),emoji:"💊"};
-    groups.push(ng);save();return ng;
-  }
+    if(meta.group){
+      // Prüfe ob KI eine bestehende Gruppe gewählt hat
+      const found=groups.find(g=>g.name.toLowerCase()===meta.group.toLowerCase());
+      if(found)return found;
+      // Wirklich neue Gruppe — aber erst auf Duplikat prüfen
+      const isDup=groups.some(g=>{
+        const gl=g.name.toLowerCase();const ml=meta.group.toLowerCase();
+        return gl===ml||gl.includes(ml)||ml.includes(gl);
+      });
+      if(isDup)return groups.find(g=>g.name.toLowerCase().includes(meta.group.toLowerCase().slice(0,5)))||groups[0];
+      const ng={id:genId(),name:meta.group,color:getUniqueColor(),emoji:meta.emoji||"💊"};
+      groups.push(ng);save();toast(`Gruppe „${meta.group}" erstellt`,"info");return ng;
+    }
+  }catch{}
+  // Fallback: erste passende oder neue Gruppe
+  const ng={id:genId(),name:name.slice(0,25),color:getUniqueColor(),emoji:"💊"};
+  groups.push(ng);save();return ng;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2571,8 +2688,8 @@ function renderSettings(){
         <div style="display:flex;justify-content:space-between;margin-top:4px"><span>Datenbank:</span><span style="color:var(--accent)">sadro-2cd64</span></div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-primary btn-sm" style="flex:1" onclick="syncPush()">☁️ Jetzt hochladen</button>
-        <button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="syncPull()">⬇️ Jetzt laden</button>
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="syncPushSafe()">☁️ Hochladen</button>
+        <button class="btn btn-sm" style="flex:1;background:var(--acclo);color:var(--accent)" onclick="syncPull()">⬇️ Laden</button>
         <button class="btn btn-sm" style="flex:1;background:var(--card2)" onclick="resetCamHint()" title="Kamera-Tipp zurücksetzen">📷 Tipp zurücksetzen</button>
       </div>
     </div>
@@ -3094,7 +3211,58 @@ let _camStream=null;let _camPhotos=[];let _medId=null;let _camFacing="environmen
 function openAddModal(){stopCam();_medId=null;_camPhotos=[];renderAddModal({});
   setTimeout(()=>{const btn=document.getElementById("cam-btn");if(btn&&!_camStream)camStartOrPhoto();},350);
 }
-function editMed(id){const m=meds.find(x=>x.id===id);if(!m)return;_medId=id;_camPhotos=[];renderAddModal(m);}
+function editMed(id){const m=meds.find(x=>x.id===id);if(!m)return;_medId=id;_camPhotos=[];window._editCamStream=null;renderAddModal(m);}
+
+// Kamera im Edit-Modus ein-/ausklappen
+function toggleEditCam(){
+  const sec=document.getElementById("edit-cam-section");
+  if(!sec)return;
+  if(sec.style.display==="none"){sec.style.display="block";editCamStart();}
+  else{editCamStop();sec.style.display="none";}
+}
+let _editCamStream=null;
+async function editCamStart(){
+  const video=document.getElementById("edit-cam-video");
+  const ph=document.getElementById("edit-cam-placeholder");
+  const btn=document.getElementById("edit-cam-btn");
+  if(!video)return;
+  try{
+    _editCamStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false});
+    video.srcObject=_editCamStream;video.style.display="block";
+    if(ph)ph.style.display="none";
+    if(btn)btn.textContent="📸 Foto aufnehmen";
+    video.play();
+  }catch(e){console.warn("editCam:",e);if(btn)btn.textContent="Kamera nicht verfügbar";}
+}
+function editCamStop(){
+  if(_editCamStream){_editCamStream.getTracks().forEach(t=>t.stop());_editCamStream=null;}
+  const video=document.getElementById("edit-cam-video");
+  const ph=document.getElementById("edit-cam-placeholder");
+  if(video){video.srcObject=null;video.style.display="none";}
+  if(ph)ph.style.display="block";
+}
+function editCamStartOrPhoto(){
+  if(_editCamStream){
+    // Foto aufnehmen
+    const video=document.getElementById("edit-cam-video");
+    if(!video)return;
+    const canvas=document.createElement("canvas");
+    canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;
+    canvas.getContext("2d").drawImage(video,0,0);
+    const dataUrl=canvas.toDataURL("image/jpeg",0.92);
+    _camPhotos.push(dataUrl);
+    // Vorschau aktualisieren
+    const row=document.getElementById("edit-thumb-row");
+    if(row){
+      const img=document.createElement("img");
+      img.src=dataUrl;img.style.cssText="width:52px;height:52px;object-fit:cover;border-radius:6px;border:2px solid var(--accent)";
+      row.appendChild(img);
+    }
+    toast("📸 Foto aufgenommen ("+_camPhotos.length+")","ok");
+  }else{
+    editCamStart();
+  }
+}
 
 function renderAddModal(med){
   const isEdit=!!_medId;
@@ -3152,13 +3320,38 @@ function renderAddModal(med){
     </div>
     <!-- ── FORMULAR-BEREICH ── -->
     <div id="form-section" ${!isEdit?"style='display:none'":" "}>
-      <!-- Foto-Vorschau beim Bearbeiten -->
-      ${isEdit&&(med.photos&&med.photos.length>0||med.photo)?`
+      <!-- Foto-Bereich beim Bearbeiten (immer sichtbar) -->
+      ${isEdit?`
       <div style="margin-bottom:12px">
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Fotos (${(med.photos&&med.photos.length)||1}) <button onclick="showPhotoModal('${med.id}')" style="border:none;background:none;color:var(--accent);font-size:11px;cursor:pointer;font-weight:600">Bearbeiten ›</button></div>
-        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+          Fotos${med.photos&&med.photos.length>0||med.photo?' ('+((med.photos&&med.photos.length)||1)+')':''}
+          ${med.photos&&med.photos.length>0||med.photo?`<button onclick="showPhotoModal('${med.id}')" style="border:none;background:none;color:var(--accent);font-size:11px;cursor:pointer;font-weight:600">Bearbeiten ›</button>`:''}
+        </div>
+        <!-- Vorhandene Fotos -->
+        ${med.photos&&med.photos.length>0||med.photo?`
+        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px">
           ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||i===0);return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}')" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:var(--surface)"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
-          <div onclick="switchTab('photo')" style="width:56px;height:56px;border-radius:8px;border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;flex-shrink:0;color:var(--muted)" title="Foto hinzufügen">+</div>
+        </div>`:`<div style="font-size:12px;color:var(--muted);margin-bottom:8px;padding:10px;background:var(--faint);border-radius:8px;text-align:center">📷 Noch kein Foto vorhanden</div>`}
+        <!-- Foto-Aktions-Buttons -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="toggleEditCam()">📷 Foto machen</button>
+          <button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="closeModal();fetchMedImageManual('${med.id}')">🌐 Online suchen</button>
+          ${med.pzn?`<button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="closeModal();singleValidate('${med.id}')">🔍 PZN prüfen</button>`:''}
+        </div>
+        <!-- Kamera im Edit-Modus (ausklappbar) -->
+        <div id="edit-cam-section" style="display:none;margin-top:10px">
+          <div id="edit-cam-view" style="position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
+            <video id="edit-cam-video" style="width:100%;height:100%;object-fit:cover;display:none" playsinline muted></video>
+            <div id="edit-cam-placeholder" style="text-align:center;color:var(--muted);padding:20px">
+              <div style="font-size:36px;margin-bottom:6px">📷</div>
+              <div style="font-size:11px">Kamera starten</div>
+            </div>
+          </div>
+          <div id="edit-thumb-row" style="display:flex;gap:6px;margin-bottom:8px;overflow-x:auto;min-height:0"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" id="edit-cam-btn" onclick="editCamStartOrPhoto()" style="flex:2">📷 Kamera starten</button>
+            <button class="btn" id="edit-cam-stop" onclick="editCamStop()" style="flex:1;display:none">✕ Stop</button>
+          </div>
         </div>
       </div>`:""}
       <!-- KI-Info über erkannte Packung -->
@@ -3177,8 +3370,8 @@ function renderAddModal(med){
       <div class="fw"><label class="lbl">Anwendungsgebiet</label><input id="med-purpose" placeholder="z.B. Schmerzen, Fieber" value="${h(med.purpose||"")}"/></div>
       <div class="fw"><label class="lbl">Wirkstoff <span style="font-size:10px;color:var(--muted)">(optional – KI erkennt automatisch)</span></label><input id="med-ingredient" placeholder="z.B. Ibuprofen, Paracetamol" value="${h(med.activeIngredient||"")}"/></div>
       <!-- PZN mit Scanner-Button -->
-      <div class="fw"><label class="lbl">PZN <span style="font-size:10px;color:var(--muted)">– führende Nullen werden erfasst!</span></label>
-        <input id="med-pzn" placeholder="z.B. 04574804" maxlength="8" value="${h(med.pzn||"")}"/>
+      <div class="fw"><label class="lbl">PZN <span style="font-size:10px;color:var(--muted)">– „x" eingeben um Prüfung zu überspringen</span></label>
+        <input id="med-pzn" placeholder="z.B. 04574804 oder x zum Überspringen" maxlength="9" value="${h(med.pzn||"")}"/>
       </div>
       <!-- Mengeneingabe: Anzahl und Einheit -->
       <div class="grid2" style="margin-bottom:8px">
@@ -3213,6 +3406,10 @@ function renderAddModal(med){
       <!-- Gruppen-Auswahl -->
       <div class="fw"><label class="lbl">Gruppe <span id="grp-ind" style="font-size:10px;color:var(--muted);font-weight:400"></span></label>
         <select id="med-grp"><option value="">Gruppe wählen...</option>${grpSel}</select></div>
+      <!-- Sonstiges / Notizen -->
+      <div class="fw" style="margin-bottom:8px"><label class="lbl">Sonstiges / Notizen <span style="font-size:10px;color:var(--muted)">optional</span></label>
+        <input id="med-notes" placeholder="z.B. Kühl lagern, nach dem Essen, etc." value="${h(med.notes||"")}"/>
+      </div>
       <!-- Nur-1-Einheit-Warnung -->
       <div id="low-row" style="display:${(med.count||1)<=1?"flex":"none"};align-items:center;gap:10px;margin-bottom:14px;padding:9px 12px;background:var(--redlo);border-radius:8px">
         <input type="checkbox" id="med-low" ${med.lowStock?"checked":""} style="width:15px;height:15px;cursor:pointer;accent-color:var(--red)"/>
@@ -3485,17 +3682,29 @@ function saveMed(){
   const computedFromPack=pillsPerPack&&count?count*pillsPerPack:null;
   const finalTotal=totalPillsManual||computedFromBlister||computedFromPack||(window._totalPills||existing?.totalPills||null);
   const countChanged=existing&&existing.count!==count;
-  const rawPhotos=(window._addPhotos&&window._addPhotos.length?window._addPhotos:(_camPhotos.length?[..._camPhotos]:(existing?.photos)||[]));
-  const rawPhoto=(window._addPhotos&&window._addPhotos[0])||(_camPhotos.length?_camPhotos[0]:null)||(existing?.photos&&existing.photos[0])||(existing?.photo)||null;
+  // PZN: "x" = Prüfung und Foto-Suche überspringen
+  const pznRaw=(document.getElementById("med-pzn")?.value||"").trim();
+  const pznSkip=pznRaw.toLowerCase()==="x";
+  const pznVal=pznSkip?"":((pznRaw==="null"||pznRaw==="undefined")?"":pznRaw);
+  // Fotos: neue Fotos (Kamera/Edit) zu bestehenden HINZUFÜGEN statt ersetzen
+  const newCamPhotos=window._addPhotos?.length?[...window._addPhotos]:(_camPhotos.length?[..._camPhotos]:[]);
+  const existingPhotos=existing?.photos?.length?[...existing.photos]:(existing?.photo?[existing.photo]:[]);
+  const rawPhotos=_medId&&newCamPhotos.length
+    ?[...existingPhotos,...newCamPhotos]   // Edit: bestehende + neue
+    :(newCamPhotos.length?newCamPhotos:existingPhotos);
+  // Hauptfoto: bei Edit bleibt das bestehende Hauptfoto erhalten
+  const rawPhoto=(_medId&&existing?.photo&&!newCamPhotos.length)?existing.photo:(rawPhotos[0]||null);
   const m={
     id:_medId||genId(),name,strength,manufacturer,
     purpose:document.getElementById("med-purpose")?.value||"",
     activeIngredient:document.getElementById("med-ingredient")?.value?.trim()||"",
-    pzn:(()=>{const v=document.getElementById("med-pzn")?.value||"";return(v==="null"||v==="undefined")?"":v;})(),
+    notes:document.getElementById("med-notes")?.value?.trim()||"",
+    pzn:pznVal,pznSkip,
     count,unit,lowStock,groupId:grpId,
     storedSince:document.getElementById("med-since")?.value||td(),
     expiryDate:document.getElementById("med-exp")?.value||"",
     photos:rawPhotos,photo:rawPhoto,
+    photoIsUrl:existing?.photoIsUrl||false,
     blisterCount:blisterCount,
     pillsPerBlister:pillsPerPack,pillUnit,totalPills:finalTotal,
   };
@@ -3523,11 +3732,15 @@ async function _doSaveMed(m,rawPhoto){
   }
   if(_medId){
     meds=meds.map(x=>x.id===_medId?m:x);addToArchive(m);
-    // pillsPerBlister nur in Cache schreiben wenn blisterCount>1 (echte Blister-Struktur bekannt)
     if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
     window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
-    save();closeAndRefresh();stopCam();toast("Gespeichert ✓");
-    if(apiKey&&apiKey.startsWith("sk-ant-"))setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:!m.photo}),1500);
+    save();closeAndRefresh();stopCam();editCamStop();toast("Gespeichert ✓");
+    // KI-Check nur wenn Daten wirklich unvollständig (nicht bei pznSkip)
+    const dataComplete=m.pzn&&m.name&&m.manufacturer&&m.strength;
+    if(apiKey&&apiKey.startsWith("sk-ant-")&&!m.pznSkip&&!dataComplete)
+      setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:!m.photo}),1500);
+    // Foto-Suche nur wenn kein Foto und nicht via "x" übersprungen
+    if(!m.photo&&!m.pznSkip)setTimeout(()=>fetchMedImageFromWeb(m.id),1500);
   }else{
     const _nn=s=>(s||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
     const dup=meds.find(x=>{
@@ -3554,13 +3767,13 @@ async function _doSaveMed(m,rawPhoto){
     // pillsPerBlister nur in Cache wenn blisterCount>1 bekannt (z.B. "2 Blister à 10 Tabletten")
     if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
     window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
-    save();closeAndRefresh();stopCam();toast(`${name} hinzugefügt ✓`);
-    // KI-Check (falls API-Key vorhanden) + Foto-Suche (kein Key nötig)
-    if(apiKey&&apiKey.startsWith("sk-ant-")){
-      setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
+    save();closeAndRefresh();stopCam();editCamStop();toast(`${name} hinzugefügt ✓`);
+    // KI-Check und Foto-Suche nur wenn nicht per "x" übersprungen
+    if(!m.pznSkip){
+      if(apiKey&&apiKey.startsWith("sk-ant-"))
+        setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:true}),1500);
+      if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),apiKey&&apiKey.startsWith("sk-ant-")?3000:500);
     }
-    // Direkte Foto-Suche immer starten (Phase 1 braucht keinen API-Key)
-    if(!m.photo)setTimeout(()=>fetchMedImageFromWeb(m.id),apiKey&&apiKey.startsWith("sk-ant-")?3000:500);
   }
 }
 
@@ -4492,7 +4705,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-021 · 29.04.2026";
+window._buildTime="SaDro-023 · 02.05.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
