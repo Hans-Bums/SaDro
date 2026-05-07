@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="SaDro"/>
 <meta name="application-name" content="SaDro"/>
 <meta name="theme-color" content="#2563EB"/>
-<title>SaDro · Smart Drug Box</title>
+<title>SaDro · Smart Drug Box v024</title>
 <style>
 /* ── CSS-Variablen: Farben und Abstände für Hell- und Dunkel-Modus ── */
 :root{
@@ -227,7 +227,118 @@ input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 </script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
+
+// ══════════════════════════════════════════════════════════════════
+// MEHRSPRACHIGKEIT: DE / EN / TR / FA / AR / FR
+// Neue Strings hier ergänzen – T("key") gibt übersetzen Text zurück
+// RTL wird automatisch für AR und FA aktiviert
+// ══════════════════════════════════════════════════════════════════
+const STRINGS={
+  de:{
+    appTitle:"Medikamentenschrank",addMed:"Medikament hinzufügen",save:"Speichern",cancel:"Abbrechen",
+    edit:"Bearbeiten",delete:"Löschen",search:"Suche",settings:"Einstellungen",
+    name:"Name",strength:"Stärke",manufacturer:"Hersteller",purpose:"Anwendungsgebiet",
+    count:"Anzahl",unit:"Einheit",expiry:"Ablaufdatum",group:"Gruppe",
+    favs:"Favoriten",stats:"Statistik",sync:"Synchronisieren",
+    takePic:"Foto machen",searchOnline:"Online suchen",noPhoto:"Noch kein Foto",
+    allGroups:"Alle",withPhoto:"Mit Foto",withoutPhoto:"Ohne Foto",
+    lowStock:"Fast leer",expired:"Abgelaufen",soonExpiring:"Läuft bald ab",
+    reminder:"Erinnerung",minQty:"Mindestmenge",setReminder:"Erinnerung einstellen",
+    reminderSaved:"Erinnerung gesetzt",reminderOff:"Erinnerung deaktiviert",
+    restock:"Nachkaufen",empty:"LEER",language:"Sprache",
+    international:"Internationales Medikament",
+    notes:"Notizen",pzn:"PZN",
+  },
+  en:{
+    appTitle:"Medicine Cabinet",addMed:"Add Medication",save:"Save",cancel:"Cancel",
+    edit:"Edit",delete:"Delete",search:"Search",settings:"Settings",
+    name:"Name",strength:"Strength",manufacturer:"Manufacturer",purpose:"Purpose",
+    count:"Quantity",unit:"Unit",expiry:"Expiry Date",group:"Group",
+    favs:"Favourites",stats:"Statistics",sync:"Sync",
+    takePic:"Take Photo",searchOnline:"Search Online",noPhoto:"No Photo Yet",
+    allGroups:"All",withPhoto:"With Photo",withoutPhoto:"Without Photo",
+    lowStock:"Low Stock",expired:"Expired",soonExpiring:"Expiring Soon",
+    reminder:"Reminder",minQty:"Minimum Qty",setReminder:"Set Reminder",
+    reminderSaved:"Reminder set",reminderOff:"Reminder disabled",
+    restock:"Reorder",empty:"EMPTY",language:"Language",
+    international:"International Medication",
+    notes:"Notes",pzn:"PZN",
+  },
+  tr:{
+    appTitle:"İlaç Dolabı",addMed:"İlaç Ekle",save:"Kaydet",cancel:"İptal",
+    edit:"Düzenle",delete:"Sil",search:"Ara",settings:"Ayarlar",
+    name:"İsim",strength:"Doz",manufacturer:"Üretici",purpose:"Kullanım Amacı",
+    count:"Miktar",unit:"Birim",expiry:"Son Kullanma",group:"Grup",
+    favs:"Favoriler",stats:"İstatistik",sync:"Senkronize",
+    takePic:"Fotoğraf Çek",searchOnline:"Çevrimiçi Ara",noPhoto:"Henüz Fotoğraf Yok",
+    allGroups:"Tümü",withPhoto:"Fotoğraflı",withoutPhoto:"Fotoğrafsız",
+    lowStock:"Az Kaldı",expired:"Süresi Dolmuş",soonExpiring:"Yakında Bitiyor",
+    reminder:"Hatırlatıcı",minQty:"Min. Miktar",setReminder:"Hatırlatıcı Ayarla",
+    reminderSaved:"Hatırlatıcı ayarlandı",reminderOff:"Hatırlatıcı kapatıldı",
+    restock:"Yeniden Satın Al",empty:"BOŞ",language:"Dil",
+    international:"Uluslararası İlaç",
+    notes:"Notlar",pzn:"PZN",
+  },
+  fa:{
+    appTitle:"داروخانه",addMed:"افزودن دارو",save:"ذخیره",cancel:"لغو",
+    edit:"ویرایش",delete:"حذف",search:"جستجو",settings:"تنظیمات",
+    name:"نام",strength:"قدرت",manufacturer:"سازنده",purpose:"موارد مصرف",
+    count:"تعداد",unit:"واحد",expiry:"تاریخ انقضا",group:"گروه",
+    favs:"موردعلاقه‌ها",stats:"آمار",sync:"همگام‌سازی",
+    takePic:"عکس بگیرید",searchOnline:"جستجوی آنلاین",noPhoto:"هنوز عکسی ندارد",
+    allGroups:"همه",withPhoto:"با عکس",withoutPhoto:"بدون عکس",
+    lowStock:"رو به اتمام",expired:"منقضی",soonExpiring:"به زودی منقضی",
+    reminder:"یادآوری",minQty:"حداقل مقدار",setReminder:"تنظیم یادآوری",
+    reminderSaved:"یادآوری تنظیم شد",reminderOff:"یادآوری غیرفعال شد",
+    restock:"خرید مجدد",empty:"خالی",language:"زبان",
+    international:"داروی بین‌المللی",
+    notes:"یادداشت",pzn:"کد",
+  },
+  ar:{
+    appTitle:"خزانة الأدوية",addMed:"إضافة دواء",save:"حفظ",cancel:"إلغاء",
+    edit:"تعديل",delete:"حذف",search:"بحث",settings:"الإعدادات",
+    name:"الاسم",strength:"الجرعة",manufacturer:"الشركة",purpose:"الاستخدام",
+    count:"الكمية",unit:"الوحدة",expiry:"تاريخ الانتهاء",group:"المجموعة",
+    favs:"المفضلة",stats:"الإحصاء",sync:"مزامنة",
+    takePic:"التقط صورة",searchOnline:"بحث أونلاين",noPhoto:"لا توجد صورة",
+    allGroups:"الكل",withPhoto:"مع صورة",withoutPhoto:"بدون صورة",
+    lowStock:"كمية منخفضة",expired:"منتهي الصلاحية",soonExpiring:"ينتهي قريباً",
+    reminder:"تذكير",minQty:"الحد الأدنى",setReminder:"ضبط التذكير",
+    reminderSaved:"تم ضبط التذكير",reminderOff:"تم إلغاء التذكير",
+    restock:"إعادة الشراء",empty:"فارغ",language:"اللغة",
+    international:"دواء دولي",
+    notes:"ملاحظات",pzn:"الرمز",
+  },
+  fr:{
+    appTitle:"Armoire à Médicaments",addMed:"Ajouter un médicament",save:"Enregistrer",cancel:"Annuler",
+    edit:"Modifier",delete:"Supprimer",search:"Rechercher",settings:"Paramètres",
+    name:"Nom",strength:"Dosage",manufacturer:"Fabricant",purpose:"Indication",
+    count:"Quantité",unit:"Unité",expiry:"Date d'expiration",group:"Groupe",
+    favs:"Favoris",stats:"Statistiques",sync:"Synchroniser",
+    takePic:"Prendre une photo",searchOnline:"Rechercher en ligne",noPhoto:"Pas encore de photo",
+    allGroups:"Tout",withPhoto:"Avec photo",withoutPhoto:"Sans photo",
+    lowStock:"Stock faible",expired:"Expiré",soonExpiring:"Expire bientôt",
+    reminder:"Rappel",minQty:"Quantité min.",setReminder:"Définir un rappel",
+    reminderSaved:"Rappel enregistré",reminderOff:"Rappel désactivé",
+    restock:"Racheter",empty:"VIDE",language:"Langue",
+    international:"Médicament international",
+    notes:"Notes",pzn:"PZN",
+  },
+};
+const RTL_LANGS=['ar','fa'];
+function T(key){
+  const lang=(typeof cfg!=='undefined'&&cfg.lang)||LS.get("sdro_c_lang")||"de";
+  return (STRINGS[lang]&&STRINGS[lang][key])||STRINGS.de[key]||key;
+}
+function applyLang(){
+  const lang=(typeof cfg!=='undefined'&&cfg.lang)||"de";
+  const isRtl=RTL_LANGS.includes(lang);
+  document.documentElement.lang=lang;
+  document.body.dir=isRtl?"rtl":"ltr";
+  document.body.style.fontFamily=isRtl?'Tahoma,system-ui,sans-serif':'system-ui,sans-serif';
+}
 
 // ══════════════════════════════════════════════════════════════════
 // DATENSPEICHERUNG: Einfacher Wrapper für localStorage
@@ -259,7 +370,7 @@ const FIREBASE_CONFIG={
   appId:"1:195277915854:web:822ee0b31fd7f8bb51f29f"
 };
 
-let _fbApp=null;let _fbDb=null;let _fbListening=false;let _syncRunning=false;
+let _fbApp=null;let _fbDb=null;let _fbAuth=null;let _fbListening=false;let _syncRunning=false;
 
 function initFirebase(){
   if(_fbApp)return true;
@@ -267,8 +378,31 @@ function initFirebase(){
     if(typeof firebase==="undefined")return false;
     _fbApp=firebase.initializeApp(FIREBASE_CONFIG);
     _fbDb=firebase.database();
+    _fbAuth=firebase.auth();
     return true;
   }catch(e){console.warn("Firebase init:",e);return false;}
+}
+
+// Anonyme Anmeldung – sichert die Datenbank vor fremdem Zugriff
+// (Firebase Regeln: auth !== null → nur angemeldete User)
+// Läuft im Hintergrund, blockiert den Start NICHT
+function _signInAnonymously(cb){
+  if(!_fbAuth){cb(false);return;}
+  // Falls bereits angemeldet → sofort fertig
+  if(_fbAuth.currentUser){cb(true);return;}
+  let _cbDone=false; // Callback nur einmal aufrufen
+  const _once=v=>{if(!_cbDone){_cbDone=true;cb(v);}};
+  // Einmaligen State-Listener registrieren
+  const unsub=_fbAuth.onAuthStateChanged(user=>{
+    if(user){unsub();_once(true);}
+  });
+  // Anonym anmelden
+  _fbAuth.signInAnonymously()
+    .then(()=>{/* onAuthStateChanged feuert dann */})
+    .catch(e=>{
+      console.warn("Anon Auth:",e.code||e);
+      unsub();_once(false);
+    });
 }
 
 // Echtzeit-Listener: Änderungen anderer Geräte sofort empfangen
@@ -346,7 +480,14 @@ function startFirebaseListener(){
   },err=>{
     console.warn("Firebase listener:",err);
     _initialSyncDone=true;
+    _fbListening=false; // Reset → Retry möglich
     if(lbl()){lbl().style.color="var(--red)";lbl().textContent="Offline";}
+    // Bei Auth-Fehler: nach 3s erneut versuchen (Auth könnte inzwischen fertig sein)
+    if(err.code==="PERMISSION_DENIED"){
+      setTimeout(()=>{
+        if(!_initialSyncDone){_fbListening=false;startFirebaseListener();}
+      },3000);
+    }
   });
 }
 
@@ -420,15 +561,20 @@ async function syncPull(){
   }
 }
 
-// Firebase starten – SOFORT beim Laden, Listener hat Priorität
+// Firebase starten – SOFORT Listener, Auth läuft parallel im Hintergrund
+// Auth blockiert den Start NICHT – Listener feuert sofort wie gehabt
 setTimeout(()=>{
   if(initFirebase()){
+    // 1) Auth im Hintergrund starten (für künftige Regeln auth !== null)
+    _signInAnonymously(ok=>console.log("Firebase Anon-Auth:",ok?"✓":"fehlgeschlagen"));
+    // 2) Listener SOFORT starten – wartet nicht auf Auth
     startFirebaseListener();
     // Fallback: Falls Listener nach 4s noch nicht gefeuert → manuell ziehen
     setTimeout(()=>{if(!_initialSyncDone){console.log("Sync-Fallback");syncPull();}},4000);
   }else{
     setTimeout(()=>{
       if(initFirebase()){
+        _signInAnonymously(ok=>{});
         startFirebaseListener();
         setTimeout(()=>{if(!_initialSyncDone)syncPull();},4000);
       }else{_initialSyncDone=true;} // Kein Firebase → Offline-Modus
@@ -442,6 +588,8 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 if(!users.length){users=[{id:"u1",name:"Standard"}];LS.set("sdro_users",users);LS.set("sdro_curuser",currentUserId);}
 if(!users.find(u=>u.id===currentUserId)){currentUserId=users[0].id;LS.set("sdro_curuser",currentUserId);}
 
+// Favoriten-Erinnerungen beim Start prüfen (nach kurzer Verzögerung)
+setTimeout(()=>{if(typeof checkFavReminders==="function")checkFavReminders();},3500);
 
 // ══════════════════════════════════════════════════════════════════
 // BLISTER-CACHE: Menge pro Blister pro Medikament speichern
@@ -577,6 +725,7 @@ function applyTheme(){
   document.documentElement[dark?"setAttribute":"removeAttribute"]("data-dark","");
 }
 applyTheme();
+applyLang();
 
 // ══════════════════════════════════════════════════════════════════
 // HILFS-FUNKTIONEN: Datum, Formatierung, HTML-Escaping
@@ -787,29 +936,102 @@ function _pznFromCdnUrl(url){
 }
 
 // ── Phase 1: shop-apotheke.com über CORS-Proxy ───────────────────────
-// api.codetabs.com leitet den Request server-seitig weiter → kein CORS-Problem
-// CDN-Bilder (cdn.shop-apotheke.com) sind frei ladbar (kein Hotlink-Schutz)
+// STRENGE PRÜFUNG: Jedes Bild wird verifiziert bevor es gespeichert wird.
+//
+// Verifikations-Regeln:
+//   • PZN bekannt + CDN-PZN vorhanden  → müssen übereinstimmen (MUSS)
+//   • PZN bekannt + CDN-PZN fehlt      → ABLEHNEN (nicht verifizierbar)
+//   • PZN fehlt + CDN-PZN vorhanden    → PZN aus CDN verwenden, Name prüfen
+//   • PZN fehlt + CDN-PZN fehlt        → Medikamentname MUSS im HTML-Kontext stehen
+//
 // Gibt {url,pzn} zurück oder null
 async function _shopApothekeSearch(name,pzn,strength,manufacturer){
-  const words=name.trim().split(/\s+/);
-  const nameShort=words.slice(0,2).join(' ');
-  const str=strength?strength.replace(/\s/g,''):'';  // "10 mg" → "10mg"
-
-  // Suchreihenfolge: spezifischste zuerst
-  // 1. PZN (eindeutig, falls bekannt)
-  // 2. Name + Stärke + Hersteller (vollständige Kombination)
-  // 3. Name + Stärke
-  // 4. Name allein (Fallback)
-  const comboParts=[words[0],str,manufacturer].filter(Boolean).join(' ');
-  const withStrength=[words[0],str].filter(Boolean).join(' ');
-  const queries=[
-    pzn,
-    comboParts!==withStrength?comboParts:null,
-    str?withStrength:null,
-    nameShort,
-  ].filter((v,i,a)=>v&&a.indexOf(v)===i);
-
   const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+  const pznPad=pzn?String(pzn).padStart(8,'0'):'';
+  const nameLower=name.toLowerCase();
+  // Kernwörter des Namens für Kontext-Prüfung (erste 2 Wörter, mind. 4 Zeichen)
+  const nameWords=name.trim().split(/\s+/).filter(w=>w.length>=4).slice(0,2);
+
+  // CDN-URLs aus HTML extrahieren MIT Kontext (50 Zeichen vor der URL)
+  function _extractCdnWithContext(html){
+    const seen=new Set();
+    const results=[];
+    const re=/cdn\.shop-apotheke\.com\/images\/[A-Za-z0-9/._-]+\.jpg/gi;
+    let m;
+    while((m=re.exec(html))!==null){
+      const raw=m[0].replace(/['"&<>\s>]+.*$/,'');
+      const url='https://'+raw;
+      if(seen.has(url))continue;
+      seen.add(url);
+      // Kontext: 300 Zeichen vor + 200 Zeichen nach der URL (für Name-Prüfung)
+      const ctx=html.substring(Math.max(0,m.index-300),m.index+url.length+200).toLowerCase();
+      const cdnPzn=_pznFromCdnUrl(url);
+      results.push({url,cdnPzn,ctx});
+    }
+    return results;
+  }
+
+  // Prüft ob ein Kandidat akzeptiert werden soll
+  // Gibt {ok,reason} zurück
+  function _verify(candidate){
+    const {url,cdnPzn,ctx}=candidate;
+
+    if(pznPad){
+      // ── PZN BEKANNT: strenge PZN-Prüfung ──
+      if(cdnPzn){
+        if(cdnPzn===pznPad)return{ok:true,reason:'PZN-Match: '+cdnPzn};
+        return{ok:false,reason:'PZN-Konflikt: Meds='+pznPad+' CDN='+cdnPzn};
+      }
+      // CDN-PZN nicht extrahierbar → ablehnen (kann Grippostad durch Augentropfen ersetzen!)
+      return{ok:false,reason:'CDN-PZN fehlt, kann nicht verifizieren (PZN='+pznPad+')'};
+    }
+
+    // ── KEINE PZN: Name + Hersteller müssen im Kontext erscheinen ──
+    // Mindestens das erste Schlüsselwort des Namens muss in den 300 Zeichen Kontext passen
+    const nameOk=nameWords.some(w=>ctx.includes(w.toLowerCase()));
+    const manuOk=manufacturer?ctx.includes(manufacturer.toLowerCase().slice(0,6)):true;
+
+    if(nameOk){
+      return{ok:true,reason:'Name-Match im Kontext'+(cdnPzn?' (CDN-PZN='+cdnPzn+')':'')};
+    }
+    if(manuOk&&manufacturer){
+      return{ok:true,reason:'Hersteller-Match im Kontext'};
+    }
+    return{ok:false,reason:'Name "'+name+'" nicht im Kontext gefunden'};
+  }
+
+  // ── Strategie 1: Direkte PZN-Produktseite (100% korrekt) ──────────────
+  if(pznPad){
+    const productUrl='https://www.shop-apotheke.com/arzneimittel/pzn'+pznPad+'/';
+    try{
+      const ctrl=new AbortController();
+      const t=setTimeout(()=>ctrl.abort(),12000);
+      const r=await fetch(PROXY+encodeURIComponent(productUrl),{signal:ctrl.signal});
+      clearTimeout(t);
+      if(r.ok){
+        const html=await r.text();
+        const candidates=_extractCdnWithContext(html);
+        console.log('shopApotheke direkt PZN='+pznPad+' →',candidates.length,'Kandidaten');
+        for(const c of candidates.slice(0,5)){
+          const v=_verify(c);
+          if(v.ok&&await _imgLoads(c.url,6000)){
+            console.log('✅ Bild akzeptiert (direkte PZN-Seite):',c.url,v.reason);
+            return{url:c.url,pzn:c.cdnPzn||pznPad};
+          }
+          if(!v.ok)console.warn('❌ Bild abgelehnt:',v.reason,'→',c.url);
+        }
+      }
+    }catch(e){console.warn('shopApotheke direkt PZN:',e.message||e);}
+  }
+
+  // ── Strategie 2: Suche mit Name + Stärke + Hersteller ─────────────────
+  const words=name.trim().split(/\s+/);
+  const str=strength?strength.replace(/\s/g,''):'';
+  const queries=[
+    [words[0],str,manufacturer].filter(Boolean).join(' '),
+    [words.slice(0,2).join(' '),str].filter(Boolean).join(' '),
+    words.slice(0,2).join(' '),
+  ].filter((v,i,a)=>v&&v.trim()&&a.indexOf(v)===i);
 
   for(const query of queries){
     try{
@@ -820,49 +1042,38 @@ async function _shopApothekeSearch(name,pzn,strength,manufacturer){
       clearTimeout(t);
       if(!r.ok)continue;
       const html=await r.text();
+      const candidates=_extractCdnWithContext(html);
+      console.log('shopApotheke Suche="'+query+'" →',candidates.length,'Kandidaten');
 
-      // CDN-URLs aus HTML-Quelltext extrahieren
-      const seen=new Set(),urls=[];
-      // Format: cdn.shop-apotheke.com/images/D09/391/930/D09391930-p1.jpg
-      // oder:   cdn.shop-apotheke.com/images/256x0/D09/391/930/D09391930-p1.jpg
-      const reCDN=/cdn\.shop-apotheke\.com\/images\/[A-Za-z0-9/._-]+\.jpg/gi;
-      for(const m of html.matchAll(reCDN)){
-        const raw=m[0].replace(/['"&<>\s]+.*$/,'');
-        const url='https://'+raw;
-        if(!seen.has(url)){seen.add(url);urls.push(url);}
-      }
-      console.log('shopApotheke query="'+query+'" →',urls.length,'CDN-URLs');
-
-      // Auch PZN direkt aus dem HTML-Text extrahieren (z.B. "PZN: 12345678")
-      let htmlPzn=null;
-      const pznMatch=html.match(/\bPZN[:\s]*(\d{8})\b/i);
-      if(pznMatch)htmlPzn=pznMatch[1];
-
-      for(const url of urls.slice(0,8)){
-        if(await _imgLoads(url,6000)){
-          // PZN aus CDN-URL extrahieren (höchste Priorität)
-          const cdnPzn=_pznFromCdnUrl(url)||htmlPzn;
-          return{url,pzn:cdnPzn};
+      for(const c of candidates.slice(0,10)){
+        const v=_verify(c);
+        if(v.ok){
+          if(await _imgLoads(c.url,6000)){
+            console.log('✅ Bild akzeptiert (Suche "'+query+'"):',c.url,v.reason);
+            return{url:c.url,pzn:c.cdnPzn||null};
+          }
+        }else{
+          console.warn('❌ Bild abgelehnt (Suche "'+query+'"):',v.reason,'→',c.url);
         }
       }
-    }catch(e){console.warn('shopApotheke['+query+']:',e.message||e);}
+    }catch(e){console.warn('shopApotheke Suche['+query+']:',e.message||e);}
   }
   return null;
 }
 
-// ── Phase 3: Claude web_search (letzter Versuch) ──────────────────────
-// Hinweis: Claude web_search kann keine HTML-Seiten lesen, nur Suche.
-// Findet gelegentlich Bild-URLs die in Google-Suchergebnissen auftauchen.
+// ── Phase 3: Claude web_search (letzter Versuch, nur mit PZN oder sehr spezifisch) ──
 async function _claudeWebSearch(name,pzn,key){
   const nameBase=name.trim().split(/\s+/).slice(0,2).join(' ');
-  const prompt=`Suche nach dem Produktbild für das deutsche Medikament "${name}"${pzn?' (PZN '+pzn+')':''}.
-
-Führe diese Suchen durch:
-1. Suche: "${nameBase} Packung" site:shop-apotheke.com
-2. Suche: "${nameBase}" Medikament Verpackung jpg Foto
-
-Ich suche eine direkte Bild-URL (.jpg oder .png) der Medikamentenverpackung.
-Gib NUR die erste gefundene Bild-URL zurück – keine Erklärung.`;
+  // Mit PZN: direkt nach der PZN suchen (eindeutig)
+  // Ohne PZN: Name+Hersteller, aber wir können nicht verifizieren → niedrigere Priorität
+  const prompt=pzn
+    ?`Suche das Produktbild für PZN ${pzn} (${name}) auf shop-apotheke.com oder docmorris.com.
+URL-Format: cdn.shop-apotheke.com/images/... oder ähnlich.
+Die URL MUSS zu PZN ${pzn} gehören. Gib NUR eine direkte Bild-URL (.jpg/.png) zurück.`
+    :` Suche das offizielle Produktbild der Medikamentenpackung "${nameBase}".
+Suche: "${nameBase} Packung" site:shop-apotheke.com
+Das Bild MUSS das Produkt "${nameBase}" zeigen – kein anderes Medikament!
+Gib NUR eine direkte Bild-URL (.jpg/.png) zurück.`;
   try{
     const r=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
@@ -881,23 +1092,26 @@ Gib NUR die erste gefundene Bild-URL zurück – keine Erklärung.`;
   return null;
 }
 
-// ── Phase 2: Wikimedia Commons (Fallback für häufige Wirkstoffe) ─────
-// Gute Quelle für: Ibuprofen, Sertralin, Aspirin, Metformin, Cetirizin usw.
-// Gibt leere Ergebnisse für seltenere oder Markenmedikamente → dann Phase 1
-async function _tryWikimediaCommons(name){
+// ── Phase 2: Wikimedia Commons – STRIKT (Dateiname muss Medikamentname enthalten) ──
+// Nur verwenden wenn Dateiname klar zum Medikament passt.
+// "Ibuprofen.jpg" → OK für Ibuprofen; "Tabletten.jpg" → ABLEHNEN
+async function _tryWikimediaCommonsStrict(name,nameWords,activeIngredient){
   const words=name.trim().split(/\s+/);
-  const word1=words[0];
-  const word2=words.slice(0,2).join(' ');
-  const searchTerms=[word1,word2].filter((v,i,a)=>a.indexOf(v)===i);
-  const nameBase=word1.toLowerCase();
-  const nameShort=nameBase.slice(0,6);
+  // Suchbegriffe: Name + Wirkstoff (falls bekannt)
+  const searchTerms=[words[0],activeIngredient?activeIngredient.split(/[\s,\/]+/)[0]:null]
+    .filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i);
+  // Alle Begriffe die im Dateinamen erlaubt werden für einen Match
+  const allowedTerms=[
+    ...nameWords.map(w=>w.toLowerCase()),
+    ...(activeIngredient?activeIngredient.toLowerCase().split(/[\s,\/]+/).filter(w=>w.length>=4):[])
+  ];
 
   for(const term of searchTerms){
     try{
       const apiUrl='https://commons.wikimedia.org/w/api.php?action=query'
         +'&generator=search&gsrnamespace=6&gsrsearch='+encodeURIComponent(term)
         +'&prop=imageinfo&iiprop=url&format=json&origin=*&gsrlimit=20';
-      const r=await fetch(apiUrl,{headers:{'Accept':'application/json'}});
+      const r=await fetch(apiUrl,{signal:AbortSignal.timeout(8000),headers:{'Accept':'application/json'}});
       if(!r.ok)continue;
       const d=await r.json();
       const pages=Object.values(d.query?.pages||{});
@@ -907,32 +1121,49 @@ async function _tryWikimediaCommons(name){
         .filter(p=>p.imageinfo?.[0]?.url)
         .map(p=>{
           const url=p.imageinfo[0].url;
-          const fname=decodeURIComponent(url.split('/').pop()||'').toLowerCase();
+          const fname=decodeURIComponent(url.split('/').pop()||'').toLowerCase().replace(/\.(jpg|jpeg|png|webp|gif)$/i,'');
           return{url,fname};
         })
         .filter(({url})=>_IMG_EXT.test(url))
         .filter(({url,fname})=>!_STRUCT_RE.test(url)&&!_STRUCT_RE.test(fname))
-        .map(({url,fname})=>{
-          let score=0;
-          if(_PACK_RE.test(fname)||_PACK_RE.test(url))score-=10;
-          const bareMatch=fname.replace(/\.(jpg|jpeg|png|webp|gif)$/,'')===nameBase;
-          if(bareMatch)score+=5;
-          return{url,fname,score};
-        })
-        .sort((a,b)=>a.score-b.score)
-        .filter(({fname,score})=>{
-          if(score<0)return true;
-          if(score>=5)return false;
-          return fname.includes(nameShort);
-        });
+        // STRENGE NAMENS-PRÜFUNG: Dateiname muss mindestens einen Schlüsselbegriff enthalten
+        .filter(({fname})=>allowedTerms.some(term2=>fname.includes(term2)));
 
-      for(const {url} of valid){
-        if(await _imgLoads(url,6000))return url;
+      console.log('Wikimedia "'+term+'" → '+valid.length+' gültige Treffer (streng)');
+      for(const {url,fname} of valid){
+        if(await _imgLoads(url,6000)){
+          console.log('✅ Wikimedia akzeptiert: '+fname);
+          return url;
+        }
       }
-    }catch{}
+    }catch(e){console.warn('Wikimedia:',e.message||e);}
   }
   return null;
 }
+
+// ── OpenFDA-Bildsuche: internationale Medikamente ohne API-Key ───────
+// Nutzt DailyMed SPL-Bilder (US FDA, frei verfügbar)
+// Gut für: Aspirin, Metformin, Lisinopril, Amoxicillin, usw.
+async function _openFDAImageSearch(name,strength){
+  if(!name)return null;
+  const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+  const q=encodeURIComponent(name.split(/\s+/)[0]); // Erstes Wort = Wirkstoff/Name
+  try{
+    const fdaRes=await fetch(PROXY+'https://api.fda.gov/drug/label.json?search=openfda.brand_name:'+q+'&limit=3',{signal:AbortSignal.timeout(5000)});
+    if(!fdaRes.ok)return null;
+    const fdaJson=await fdaRes.json();
+    const results=fdaJson.results||[];
+    for(const r of results){
+      const setId=(r.openfda?.spl_set_id||[])[0];
+      if(!setId)continue;
+      // DailyMed hat Produktbilder für alle FDA-zugelassenen Medikamente
+      const imgUrl=`https://dailymed.nlm.nih.gov/dailymed/image.cfm?setid=${setId}&type=img&name=&size=200`;
+      if(await _imgLoads(imgUrl,5000))return imgUrl;
+    }
+  }catch(e){console.warn("openFDA:",e);}
+  return null;
+}
+
 
 // PZN in Medikament speichern (wenn noch nicht gesetzt)
 function _applyMedPzn(medId,pzn){
@@ -963,17 +1194,14 @@ async function fetchMedImageFromWeb(medId,force=false){
   const strength=med.strength||"";
   const manufacturer=med.manufacturer||"";
 
-  // ── Phase 1: CORS-Proxy → shop-apotheke.com (kein API-Key nötig) ──
-  // Nutzt Stärke + Hersteller für präzise Suche → findet genau DAS Produkt
-  // PZN-Verifikation: wenn Medikament eine PZN hat, muss das Bild passen!
+  // ── Phase 1: shop-apotheke.com – mit strikter PZN + Name-Verifikation ──
+  // _shopApothekeSearch prüft intern bereits PZN und Name – kein Doppelcheck nötig
   try{
     const res=await _shopApothekeSearch(name,pzn,strength,manufacturer);
     if(res&&res.url){
-      // PZN-Prüfung: CDN-PZN muss mit Medikament-PZN übereinstimmen (wenn bekannt)
-      const pznOk=!pzn||!res.pzn||res.pzn===String(pzn).padStart(8,"0")||String(pzn).padStart(8,"0")===res.pzn;
-      if(!pznOk){
-        console.warn('PZN-Konflikt: Medikament='+pzn+' Bild-CDN='+res.pzn+' → Bild abgelehnt');
-        // Weiter zu Phase 2 statt falsches Bild zu speichern
+      // Nochmalige Sicherheitsprüfung (Defense in depth)
+      if(pzn&&res.pzn&&res.pzn!==String(pzn).padStart(8,'0')){
+        console.warn('⛔ Doppelter PZN-Check: '+res.pzn+' ≠ '+pzn+' → Bild ABGELEHNT');
       }else{
         _applyMedPhoto(medId,res.url,force,force);
         if(res.pzn)_applyMedPzn(medId,res.pzn);
@@ -982,9 +1210,21 @@ async function fetchMedImageFromWeb(medId,force=false){
     }
   }catch(e){console.warn("fetchMedImage Phase1:",e);}
 
-  // ── Phase 2: Wikimedia Commons (kein API-Key nötig) ───────────────
+  // ── Phase 1b: OpenFDA – nur wenn Medikament KEIN deutsches ist ────────
+  // OpenFDA kennt nur US-Medikamente → bei bekannter PZN überspringen (PZN = deutsch)
+  if(!pzn||(med.international)){
+    try{
+      const fdaUrl=await _openFDAImageSearch(name,strength);
+      // OpenFDA-Bild hat keine PZN-Verifikation → nur ohne PZN verwenden
+      if(fdaUrl&&!pzn){_applyMedPhoto(medId,fdaUrl,force,force);return true;}
+    }catch(e){console.warn("fetchMedImage Phase1b:",e);}
+  }
+
+  // ── Phase 2: Wikimedia Commons – NUR wenn Dateiname den Namen enthält ──
+  // Sehr restriktiv: Ibuprofen-Datei nur für Ibuprofen, nie für Aspirin usw.
   try{
-    const commonsUrl=await _tryWikimediaCommons(name);
+    const nameWords2=name.trim().split(/\s+/).filter(w=>w.length>=4);
+    const commonsUrl=await _tryWikimediaCommonsStrict(name,nameWords2,med.activeIngredient);
     if(commonsUrl){_applyMedPhoto(medId,commonsUrl,force,force);return true;}
   }catch(e){console.warn("fetchMedImage Phase2:",e);}
 
@@ -1874,6 +2114,7 @@ async function cropWithAI(dataUrl){
 // PZN wird in jeder Zeile angezeigt
 // ══════════════════════════════════════════════════════════════════
 let filterGrp=null;
+let filterPhoto=null; // null=alle, 'yes'=mit Foto, 'no'=ohne Foto
 let expanded=LS.get("sdro_exp")||{};
 
 // ══ Schwellenwert-Prüfung für Bestandswarnung ══
@@ -1902,6 +2143,7 @@ function _thumbImgErr(img,medId,emoji){
 }
 
 function renderList(){
+  applyLang();
   const el=document.getElementById("view-list");
   const soon=meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<(cfg.mhdNotifyDays||14);});
   const lowSt=meds.filter(m=>isLowStock(m));
@@ -1910,7 +2152,7 @@ function renderList(){
   // Kopfzeile mit Problemanzeige (kein Statistik-Button – ist in Einstellungen)
   const issueCount=meds.filter(m=>!m.expiryDate||!m.groupId||!groups.find(g=>g.id===m.groupId)).length;
   html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-    <div style="font-size:15px;font-weight:700">Medikamentenschrank</div>
+    <div style="font-size:15px;font-weight:700">💊 ${T("appTitle")}</div>
     <div style="display:flex;gap:8px;align-items:center">
       ${issueCount>0?`<button onclick="runStartupCheck()" style="border:none;background:var(--redlo);color:var(--red);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">⚠️ ${issueCount} Problem${issueCount!==1?"e":""}</button>`:""}
       <button onclick="showPZNLegend()" style="border:none;background:var(--faint);color:var(--muted);border-radius:20px;padding:4px 10px;font-size:11px;cursor:pointer" title="PZN-Badge Legende">🏷️</button>
@@ -1921,10 +2163,15 @@ function renderList(){
   if(lowSt.length&&cfg.notifyLowStock)html+=`<div class="alert alert-red">⚠️ <div><b style="color:var(--red)">Fast leer (≤${cfg.lowStockCount||1} ${cfg.lowStockUnit||"Packung"}):</b> ${lowSt.map(m=>h(m.name)).join(", ")}</div></div>`;
   if(soon.length)html+=`<div class="alert alert-amber">⏳ <div><b style="color:var(--amber)">Läuft bald ab:</b> ${soon.map(m=>h(m.name)).join(", ")}</div></div>`;
 
-  // Filter-Chips für Gruppen-Filterung
+  // Filter-Chips für Gruppen-Filterung + Foto-Filter
   html+=`<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none">`;
-  const allActive=filterGrp===null;
+  const allActive=filterGrp===null&&filterPhoto===null;
   html+=`<button onclick="setFilter(null)" style="padding:5px 12px;border-radius:20px;border:1px solid ${allActive?"var(--accent)":"var(--border)"};background:${allActive?"var(--acclo)":"var(--surface)"};color:${allActive?"var(--accent)":"var(--muted)"};font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer">Alle (${meds.length})</button>`;
+  // Foto-Filter Chips
+  const cntWithPhoto=meds.filter(m=>getDisplayPhoto(m)).length;
+  const cntNoPhoto=meds.length-cntWithPhoto;
+  if(cntWithPhoto>0){const act=filterPhoto==='yes';html+=`<button onclick="setPhotoFilter('yes')" style="padding:5px 12px;border-radius:20px;border:1px solid ${act?"var(--green)":"var(--border)"};background:${act?"var(--greenlo)":"var(--surface)"};color:${act?"var(--green)":"var(--muted)"};font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer">📷 Mit Foto (${cntWithPhoto})</button>`;}
+  if(cntNoPhoto>0){const act=filterPhoto==='no';html+=`<button onclick="setPhotoFilter('no')" style="padding:5px 12px;border-radius:20px;border:1px solid ${act?"var(--amber)":"var(--border)"};background:${act?"var(--amberlo)":"var(--surface)"};color:${act?"var(--amber)":"var(--muted)"};font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer">📷 Ohne Foto (${cntNoPhoto})</button>`;}
   // Nur Gruppen mit mindestens 1 Medikament als Filter-Chip anzeigen
   groups.filter(g=>meds.some(m=>m.groupId===g.id)).forEach(g=>{
     const act=filterGrp===g.id;const cnt=meds.filter(m=>m.groupId===g.id).length;
@@ -1932,10 +2179,12 @@ function renderList(){
   });
   html+=`</div>`;
 
+  // Foto-Filter anwenden
+  const _photoFilterFn=m=>filterPhoto==='yes'?!!getDisplayPhoto(m):filterPhoto==='no'?!getDisplayPhoto(m):true;
   // Gruppen-Ansicht: NUR Gruppen die mindestens 1 Medikament enthalten
-  const dispGroups=filterGrp?groups.filter(g=>g.id===filterGrp):groups.filter(g=>meds.some(m=>m.groupId===g.id));
+  const dispGroups=filterGrp?groups.filter(g=>g.id===filterGrp):groups.filter(g=>meds.some(m=>m.groupId===g.id&&_photoFilterFn(m)));
   dispGroups.forEach(g=>{
-    const gm=meds.filter(m=>m.groupId===g.id);
+    const gm=meds.filter(m=>m.groupId===g.id&&_photoFilterFn(m));
     if(!gm.length)return; // Leere Gruppen überspringen
     const open=expanded[g.id]!==false;
     html+=`<div style="margin-bottom:8px">
@@ -1960,8 +2209,10 @@ function renderList(){
           :`<span style="font-size:10px;color:var(--red)">⏰ kein MHD</span>`;
         // Thumbnail: Kamera-Foto bevorzugen; onerror → Platzhalter
         const _dp=getDisplayPhoto(med);
+        const _dpArr=med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[]);
+        const _dpIdx=Math.max(0,_dpArr.indexOf(_dp));
         const thumbHtml=_dp
-          ?`<img src="${_dp}" onclick="showPhotoModal('${med.id}')"
+          ?`<img src="${_dp}" onclick="showPhotoModal('${med.id}',${_dpIdx})"
               onerror="_thumbImgErr(this,'${med.id}','${g.emoji}')"
               style="cursor:pointer;width:72px;height:72px;border-radius:10px;object-fit:contain;border:2px solid var(--border);background:var(--surface);flex-shrink:0"/>`
           :`<div class="med-thumb" onclick="openMedActions('${med.id}')" style="cursor:pointer;border:2px dashed var(--border);position:relative" title="Kein Foto – klicken für Optionen">
@@ -2008,7 +2259,9 @@ function renderList(){
 }
 
 // Gruppen-Filter setzen
-function setFilter(id){filterGrp=id;renderList();}
+function setFilter(id){filterGrp=id;filterPhoto=null;renderList();}
+// Foto-Filter setzen
+function setPhotoFilter(v){filterPhoto=filterPhoto===v?null:v;filterGrp=null;renderList();}
 // Gruppe ein-/ausklappen
 function toggleGrp(id){expanded[id]=expanded[id]===false;LS.set("sdro_exp",expanded);renderList();}
 
@@ -2016,13 +2269,16 @@ function toggleGrp(id){expanded[id]=expanded[id]===false;LS.set("sdro_exp",expan
 // FOTO-GALERIE: Fotos anzeigen, drehen, zuschneiden, löschen
 // Schließt NUR per "Speichern"/"Abbrechen" oder Klick außerhalb
 // ══════════════════════════════════════════════════════════════════
-function showPhotoModal(medId){
+function showPhotoModal(medId,startIdx){
   const med=meds.find(m=>m.id===medId);if(!med)return;
   const photos=med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[]);
   if(!photos.length)return;
-  window._photoMedId=medId;window._photoIdx=0;window._photoRot=0;
+  window._photoMedId=medId;window._photoRot=0;
   const photosForMain=med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[]);
   window._mainPhotoIdx=Math.max(0,photosForMain.indexOf(med.photo));
+  // Beim Klick auf das Hauptfoto → direkt dieses Foto anzeigen
+  if(startIdx!==undefined&&startIdx>=0)window._photoIdx=startIdx;
+  else window._photoIdx=Math.max(0,photos.indexOf(med.photo));
   renderPhotoGallery();
 }
 function setMainPhoto(idx){
@@ -2512,7 +2768,7 @@ function showStatDetail(grpId,title,kpiIdx,unitFilter){
   if(grpId)list=meds.filter(m=>m.groupId===grpId);
   else if(unitFilter)list=meds.filter(m=>m.unit===unitFilter);
   else if(kpiIdx!==null&&kpiIdx!==undefined){
-    const kpis=[meds,meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d<0;}),meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<30;}),meds.filter(m=>m.lowStock),meds.filter(m=>!m.expiryDate),meds];
+    const kpis=[meds,meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d<0;}),meds.filter(m=>{const d=daysLeft(m.expiryDate);return d!==null&&d>=0&&d<30;}),meds.filter(m=>isLowStock(m)),meds.filter(m=>!m.expiryDate),meds];
     list=kpis[kpiIdx]||[];
   }
   let inner=`<div style="font-weight:700;font-size:15px;margin-bottom:14px;padding-right:24px">${h(title)}</div>`;
@@ -2591,12 +2847,19 @@ function renderSettings(){
   const keyOk=apiKey.startsWith("sk-ant-");
   const skipCount=(LS.get("sdro_skip_val")||[]).length;
   el.innerHTML=`
-    <div style="font-size:15px;font-weight:700;margin-bottom:14px">Einstellungen</div>
+    <div style="font-size:15px;font-weight:700;margin-bottom:14px">⚙️ ${T("settings")}</div>
+    <!-- SPRACHE -->
+    <div class="card" style="padding:14px;margin-bottom:10px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:10px">🌍 ${T("language")}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+        ${[["de","🇩🇪 Deutsch"],["en","🇬🇧 English"],["tr","🇹🇷 Türkçe"],["fa","🇮🇷 فارسی"],["ar","🇸🇦 عربي"],["fr","🇫🇷 Français"]].map(([l,n])=>{const act=(cfg.lang||"de")===l;return`<button onclick="setLang('${l}')" style="padding:8px 4px;border-radius:8px;border:2px solid ${act?"var(--accent)":"var(--border)"};background:${act?"var(--acclo)":"var(--surface)"};color:${act?"var(--accent)":"var(--muted)"};font-size:12px;font-weight:${act?700:400};cursor:pointer">${n}</button>`;}).join("")}
+      </div>
+    </div>
     <!-- Statistik-Button -->
     <div class="card" style="padding:14px;margin-bottom:10px">
-      <div style="font-weight:600;font-size:13px;margin-bottom:8px">📊 Statistik &amp; Auswertung</div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px">📊 ${T("stats")}</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Übersicht über Bestände, Ablaufdaten und Gruppen</div>
-      <button class="btn btn-primary btn-full" onclick="showStatsModal()">📊 Statistik öffnen</button>
+      <button class="btn btn-primary btn-full" onclick="showStatsModal()">📊 ${T("stats")} öffnen</button>
     </div>
     <!-- BLOCK 1: Lokale PZN-Datenbank -->
     <div class="card" style="padding:16px;margin-bottom:10px">
@@ -2762,6 +3025,11 @@ function renderSettings(){
     <div class="card" style="padding:14px;margin-bottom:10px;background:var(--acclo);border:1px solid var(--accent)44">
       <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:6px">☁️ Cloud-Synchronisation aktiv</div>
       <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">Daten werden automatisch über Firebase synchronisiert. Alle Geräte die die App öffnen, erhalten sofort die aktuellen Daten. Bei Änderungen werden alle offenen Apps innerhalb von Sekunden aktualisiert.</div>
+      <div style="background:var(--amberlo);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--amber);line-height:1.7">
+        🔐 <b>Datenbank absichern:</b> Firebase Console → Realtime Database → Regeln:<br>
+        <code style="background:#0002;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:10px">"sadro":{".read":"auth!=null",".write":"auth!=null"}</code><br>
+        Dann kann nur noch die App (anonym angemeldet) lesen/schreiben.
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-sm btn-ghost" style="flex:1" onclick="syncPull()">⬇️ Jetzt laden</button>
         <button class="btn btn-sm btn-ghost" style="flex:1" onclick="importData()">📤 CSV importieren</button>
@@ -2783,6 +3051,7 @@ async function toggleNotif(key){if(!cfg[key]){try{await Notification.requestPerm
 function setCfg(k,v){cfg[k]=v;save();}
 function setTheme(v){cfg.theme=v;save();applyTheme();renderSettings();}
 function saveKey(v){apiKey=v.trim();LS.set("sdro_k",apiKey);renderSettings();}
+function setLang(l){cfg.lang=l;LS.set("sdro_c_lang",l);save();applyLang();renderSettings();if(currentView==="list")renderList();}
 async function testKey(){toast("Teste Schlüssel...","info");try{await callAI([{role:"user",content:"Antworte nur: OK"}],5);toast("✓ API-Schlüssel funktioniert!");}catch(e){toast("✗ "+e.message,"warn");}}
 
 // Alle Medikamente mit PZN validieren (manuell aus Settings)
@@ -3211,7 +3480,10 @@ let _camStream=null;let _camPhotos=[];let _medId=null;let _camFacing="environmen
 function openAddModal(){stopCam();_medId=null;_camPhotos=[];renderAddModal({});
   setTimeout(()=>{const btn=document.getElementById("cam-btn");if(btn&&!_camStream)camStartOrPhoto();},350);
 }
-function editMed(id){const m=meds.find(x=>x.id===id);if(!m)return;_medId=id;_camPhotos=[];window._editCamStream=null;renderAddModal(m);}
+function editMed(id){const m=meds.find(x=>x.id===id);if(!m)return;_medId=id;_camPhotos=[];window._editCamStream=null;renderAddModal(m);
+  // Kein Foto vorhanden → Kamera direkt starten
+  if(!m.photo&&(!m.photos||!m.photos.length))setTimeout(()=>editCamStart(),400);
+}
 
 // Kamera im Edit-Modus ein-/ausklappen
 function toggleEditCam(){
@@ -3330,16 +3602,16 @@ function renderAddModal(med){
         <!-- Vorhandene Fotos -->
         ${med.photos&&med.photos.length>0||med.photo?`
         <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px">
-          ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||i===0);return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}')" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:var(--surface)"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
-        </div>`:`<div style="font-size:12px;color:var(--muted);margin-bottom:8px;padding:10px;background:var(--faint);border-radius:8px;text-align:center">📷 Noch kein Foto vorhanden</div>`}
+          ${(med.photos&&med.photos.length?med.photos:(med.photo?[med.photo]:[])).map((p,i)=>{const isMain=(med.photo===p||(!med.photo&&i===0));const idx=i;return`<div style="position:relative;flex-shrink:0"><img src="${p}" onclick="showPhotoModal('${med.id}',${idx})" style="width:56px;height:56px;object-fit:contain;border-radius:8px;cursor:pointer;border:2px solid ${isMain?"var(--accent)":"var(--border)"};background:var(--surface)"/>${isMain?`<div style="position:absolute;bottom:-2px;right:-2px;background:var(--accent);color:#fff;border-radius:50%;width:14px;height:14px;font-size:8px;display:flex;align-items:center;justify-content:center;font-weight:700">★</div>`:""}</div>`;}).join("")}
+        </div>`:`<div style="font-size:12px;color:var(--accent);margin-bottom:8px;padding:10px;background:var(--acclo);border-radius:8px;text-align:center;cursor:pointer;font-weight:600" onclick="toggleEditCam()">📷 Tippen um Foto aufzunehmen</div>`}
         <!-- Foto-Aktions-Buttons -->
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="toggleEditCam()">📷 Foto machen</button>
           <button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="closeModal();fetchMedImageManual('${med.id}')">🌐 Online suchen</button>
           ${med.pzn?`<button class="btn btn-sm" style="font-size:11px;flex:1;min-width:90px" onclick="closeModal();singleValidate('${med.id}')">🔍 PZN prüfen</button>`:''}
         </div>
-        <!-- Kamera im Edit-Modus (ausklappbar) -->
-        <div id="edit-cam-section" style="display:none;margin-top:10px">
+        <!-- Kamera im Edit-Modus (ausklappbar, auto-offen wenn kein Foto) -->
+        <div id="edit-cam-section" style="display:${med.photos&&med.photos.length>0||med.photo?'none':'block'};margin-top:10px">
           <div id="edit-cam-view" style="position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;margin-bottom:8px">
             <video id="edit-cam-video" style="width:100%;height:100%;object-fit:cover;display:none" playsinline muted></video>
             <div id="edit-cam-placeholder" style="text-align:center;color:var(--muted);padding:20px">
@@ -3372,6 +3644,11 @@ function renderAddModal(med){
       <!-- PZN mit Scanner-Button -->
       <div class="fw"><label class="lbl">PZN <span style="font-size:10px;color:var(--muted)">– „x" eingeben um Prüfung zu überspringen</span></label>
         <input id="med-pzn" placeholder="z.B. 04574804 oder x zum Überspringen" maxlength="9" value="${h(med.pzn||"")}"/>
+      </div>
+      <!-- Internationales Medikament -->
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--faint);border-radius:8px;margin-bottom:8px">
+        <input type="checkbox" id="med-intl" ${med.international?"checked":""} style="width:16px;height:16px;cursor:pointer;flex-shrink:0"/>
+        <label for="med-intl" style="font-size:12px;color:var(--muted);cursor:pointer;user-select:none">🌍 ${T("international")} (Suche in FDA, DrugBank, WHO)</label>
       </div>
       <!-- Mengeneingabe: Anzahl und Einheit -->
       <div class="grid2" style="margin-bottom:8px">
@@ -3686,25 +3963,32 @@ function saveMed(){
   const pznRaw=(document.getElementById("med-pzn")?.value||"").trim();
   const pznSkip=pznRaw.toLowerCase()==="x";
   const pznVal=pznSkip?"":((pznRaw==="null"||pznRaw==="undefined")?"":pznRaw);
-  // Fotos: neue Fotos (Kamera/Edit) zu bestehenden HINZUFÜGEN statt ersetzen
+  // Fotos: neue Kamera-Fotos werden zum Hauptfoto + zu bestehenden ergänzt
   const newCamPhotos=window._addPhotos?.length?[...window._addPhotos]:(_camPhotos.length?[..._camPhotos]:[]);
   const existingPhotos=existing?.photos?.length?[...existing.photos]:(existing?.photo?[existing.photo]:[]);
+  // Edit: neue Kamera-Fotos VOR bestehende → werden das Hauptfoto
   const rawPhotos=_medId&&newCamPhotos.length
-    ?[...existingPhotos,...newCamPhotos]   // Edit: bestehende + neue
+    ?[...newCamPhotos,...existingPhotos]   // Edit: neue Kamera-Fotos zuerst!
     :(newCamPhotos.length?newCamPhotos:existingPhotos);
-  // Hauptfoto: bei Edit bleibt das bestehende Hauptfoto erhalten
-  const rawPhoto=(_medId&&existing?.photo&&!newCamPhotos.length)?existing.photo:(rawPhotos[0]||null);
+  // Hauptfoto: neues Kamera-Foto hat Vorrang; sonst bestehendes; sonst erstes aus rawPhotos
+  const rawPhoto=newCamPhotos.length
+    ?newCamPhotos[0]                           // Neues Kamera-Foto = Hauptfoto
+    :(_medId&&existing?.photo)?existing.photo  // Edit ohne neues Foto: altes behalten
+    :(rawPhotos[0]||null);
+  // photoIsUrl: false wenn Kamera-Foto das Hauptfoto ist
+  const photoIsUrlNew=newCamPhotos.length?false:(existing?.photoIsUrl||false);
   const m={
     id:_medId||genId(),name,strength,manufacturer,
     purpose:document.getElementById("med-purpose")?.value||"",
     activeIngredient:document.getElementById("med-ingredient")?.value?.trim()||"",
     notes:document.getElementById("med-notes")?.value?.trim()||"",
     pzn:pznVal,pznSkip,
+    international:!!(document.getElementById("med-intl")?.checked),
     count,unit,lowStock,groupId:grpId,
     storedSince:document.getElementById("med-since")?.value||td(),
     expiryDate:document.getElementById("med-exp")?.value||"",
     photos:rawPhotos,photo:rawPhoto,
-    photoIsUrl:existing?.photoIsUrl||false,
+    photoIsUrl:photoIsUrlNew,
     blisterCount:blisterCount,
     pillsPerBlister:pillsPerPack,pillUnit,totalPills:finalTotal,
   };
@@ -3735,12 +4019,13 @@ async function _doSaveMed(m,rawPhoto){
     if(m.pillsPerBlister&&m.pillsPerBlister>0&&m.blisterCount&&m.blisterCount>1)setBlisterPPB(m.id,m.pillsPerBlister);
     window._addPhoto=null;window._addPhotos=null;window._blisterCount=null;window._pillsPerBlister=null;window._totalPills=null;window._pillType=null;
     save();closeAndRefresh();stopCam();editCamStop();toast("Gespeichert ✓");
-    // KI-Check nur wenn Daten wirklich unvollständig (nicht bei pznSkip)
+    // KI-Check nur wenn Daten wirklich unvollständig (nicht bei pznSkip, nicht wenn Kamera-Foto vorhanden)
     const dataComplete=m.pzn&&m.name&&m.manufacturer&&m.strength;
-    if(apiKey&&apiKey.startsWith("sk-ant-")&&!m.pznSkip&&!dataComplete)
+    const hasCamPhoto=(m.photos||[]).some(p=>p&&p.startsWith("data:"));
+    if(apiKey&&apiKey.startsWith("sk-ant-")&&!m.pznSkip&&!dataComplete&&!hasCamPhoto)
       setTimeout(()=>checkMed(m.id,{silent:true,fetchImage:!m.photo}),1500);
-    // Foto-Suche nur wenn kein Foto und nicht via "x" übersprungen
-    if(!m.photo&&!m.pznSkip)setTimeout(()=>fetchMedImageFromWeb(m.id),1500);
+    // Foto-Suche nur wenn kein Foto und kein Kamera-Foto und nicht via "x" übersprungen
+    if(!m.photo&&!hasCamPhoto&&!m.pznSkip)setTimeout(()=>fetchMedImageFromWeb(m.id),1500);
   }else{
     const _nn=s=>(s||"").toLowerCase().replace(/[^a-z0-9äöüß]/g,"");
     const dup=meds.find(x=>{
@@ -4228,6 +4513,10 @@ function _doBookEntnahme(med,overridePillsDelta){
   const logSummary=_entRows.map(r=>r.qty+" "+r.unit).join(", ");
   addLogEntry("remove",{...med,count:newCount,totalPills:newTotalPills},logSummary,null);
   save();
+  // Favoriten-Erinnerung prüfen nach Entnahme
+  if(isFav(med.id)&&(med.favMinQty||0)>0&&newCount<=med.favMinQty){
+    setTimeout(()=>toast(`🔔 ${med.name}: noch ${newCount} ${med.unit} – Nachkaufen!`,"warn"),500);
+  }
   // Wenn Bestand auf 0: Nachfragen ob löschen oder behalten
   if(newCount===0&&(newTotalPills===null||newTotalPills===0)){
     closeModal();renderList();
@@ -4371,13 +4660,21 @@ function _renderFavsModal(q){
       filtered.forEach(m=>{
         const g=groups.find(x=>x.id===m.groupId);
         const isEmpty=(m.count===0&&(m.totalPills===null||m.totalPills===0));
-        html+=`<div class="card" style="padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        const minQty=m.favMinQty||0;
+        const belowMin=minQty>0&&m.count<=minQty;
+        const stockLine=isEmpty
+          ?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>'
+          :`<div style="font-size:12px;color:${belowMin?"var(--red)":"var(--muted)"};font-weight:${belowMin?700:400}">${belowMin?"⚠️ ":""}${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}${belowMin?" – Nachkaufen!":""}</div>`;
+        const reminderBtn=`<button title="Erinnerung einstellen" onclick="setFavReminder('${m.id}')" style="border:none;background:${minQty>0?"var(--amberlo)":"var(--faint)"};cursor:pointer;padding:4px 7px;border-radius:6px;font-size:13px">${minQty>0?"🔔":"🔕"}</button>`;
+        html+=`<div class="card" style="padding:10px 12px;margin-bottom:8px;border:1px solid ${belowMin?"var(--red)44":"var(--border)"};display:flex;align-items:center;gap:10px">
           ${m.photo?`<img src="${m.photo}" style="width:36px;height:36px;border-radius:6px;object-fit:contain;flex-shrink:0;background:var(--surface)" onerror="this.style.display='none'"/>`:g?`<span style="font-size:22px;flex-shrink:0">${h(g.emoji)}</span>`:'<span style="font-size:22px;flex-shrink:0">💊</span>'}
           <div style="flex:1;min-width:0">
             <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h(m.name)}${m.strength?" · "+h(m.strength):""}</div>
-            ${isEmpty?'<div style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.5px">● LEER – Nachkaufen!</div>':`<div style="font-size:12px;color:var(--muted)">${m.count} ${m.unit}${m.totalPills?" · "+m.totalPills+" "+(m.pillUnit||"Tablette"):""}</div>`}
+            ${stockLine}
+            ${minQty>0?`<div style="font-size:10px;color:var(--amber);margin-top:2px">🔔 Erinnerung bei ≤ ${minQty} ${m.unit}</div>`:""}
           </div>
           <div style="display:flex;gap:5px;flex-shrink:0">
+            ${reminderBtn}
             <button class="btn btn-sm" onclick="closeModal();editMed('${m.id}')">✏️</button>
             ${!isEmpty?`<button class="btn btn-sm" style="background:var(--amberlo);color:var(--amber)" onclick="closeModal();openEntModalFor('${m.id}')">📤</button>`:''}
             <button style="border:none;background:none;cursor:pointer;padding:3px;font-size:16px" onclick="toggleFav('${m.id}');_renderFavsModal('${h(q)}')" title="Aus Favoriten entfernen">✕</button>
@@ -4399,6 +4696,48 @@ function _renderFavsModal(q){
   openModal('<div id="fav-modal-body">'+html+'</div>','',true);
   setTimeout(()=>{const inp=document.getElementById("fav-search-inp");if(inp)inp.focus();},80);
 }
+// ── Favoriten-Erinnerung: Mindestmenge pro Medikament einstellen ──
+function setFavReminder(medId){
+  const med=meds.find(m=>m.id===medId);if(!med)return;
+  const cur=med.favMinQty||0;
+  openSubModal(`
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">🔔 Erinnerung – ${h(med.name)}</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
+      Erinnere mich wenn der Bestand auf oder unter diesen Wert fällt.<br>
+      Aktuell: <b style="color:var(--text)">${med.count} ${med.unit}</b>
+    </div>
+    <div class="fw" style="margin-bottom:16px">
+      <label class="lbl">Mindestmenge (${med.unit})</label>
+      <input id="fav-min-inp" type="number" min="0" max="999" value="${cur}" placeholder="0 = deaktiviert"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card2);color:var(--text);font-size:16px"/>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">0 eingeben = Erinnerung deaktivieren</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="flex:1" onclick="closeSubModal()">Abbrechen</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveFavReminder('${medId}')">🔔 Speichern</button>
+    </div>`);
+  setTimeout(()=>{const i=document.getElementById("fav-min-inp");if(i){i.focus();i.select();}},80);
+}
+function saveFavReminder(medId){
+  const val=parseInt(document.getElementById("fav-min-inp")?.value||"0")||0;
+  meds=meds.map(m=>m.id===medId?{...m,favMinQty:val}:m);
+  save();closeSubModal();
+  toast(val>0?`🔔 Erinnerung bei ≤ ${val} gesetzt`:"🔕 Erinnerung deaktiviert","ok");
+  setTimeout(()=>_renderFavsModal(''),100);
+}
+// Beim Start: Favoriten-Erinnerungen prüfen
+function checkFavReminders(){
+  const favMeds=meds.filter(m=>isFav(m.id)&&(m.favMinQty||0)>0);
+  const alerts=favMeds.filter(m=>m.count<=m.favMinQty);
+  if(alerts.length){
+    const names=alerts.map(m=>`${m.name} (${m.count} ${m.unit})`).join(", ");
+    // Erst nach 3s zeigen – App muss geladen sein
+    setTimeout(()=>{
+      toast(`🔔 Nachkaufen: ${names}`,"warn");
+    },3000);
+  }
+}
+
 function openEntModalFor(id){
   _entMed=meds.find(m=>m.id===id);
   if(_entMed){
