@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
 <meta charset="UTF-8"/>
@@ -20,7 +20,7 @@
 <meta name="apple-mobile-web-app-title" content="SaDro"/>
 <meta name="application-name" content="SaDro"/>
 <meta name="theme-color" content="#2563EB"/>
-<title>SaDro · Smart Drug Box v024</title>
+<title>SaDro · Smart Drug Box v026</title>
 <style>
 /* ── CSS-Variablen: Farben und Abstände für Hell- und Dunkel-Modus ── */
 :root{
@@ -952,7 +952,16 @@ function _pznFromCdnUrl(url){
 //
 // Gibt {url,pzn} zurück oder null
 async function _shopApothekeSearch(name,pzn,strength,manufacturer){
-  const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+  const PROXIES=['https://api.codetabs.com/v1/proxy/?quest=','https://corsproxy.io/?','https://api.allorigins.win/raw?url='];
+  async function _proxyFetch(targetUrl,signal){
+    for(const P of PROXIES){
+      try{
+        const r=await fetch(P+encodeURIComponent(targetUrl),{signal});
+        if(r.ok){const t=await r.text();if(t&&t.length>500)return t;}
+      }catch(e){if(e&&e.name==='AbortError')throw e;}
+    }
+    return null;
+  }
   const pznPad=pzn?String(pzn).padStart(8,'0'):'';
   const nameLower=name.toLowerCase();
   // Kernwörter des Namens für Kontext-Prüfung (erste 2 Wörter, mind. 4 Zeichen)
@@ -1012,7 +1021,7 @@ async function _shopApothekeSearch(name,pzn,strength,manufacturer){
     try{
       const ctrl=new AbortController();
       const t=setTimeout(()=>ctrl.abort(),12000);
-      const r=await fetch(PROXY+encodeURIComponent(productUrl),{signal:ctrl.signal});
+      const r=await _proxyFetch(productUrl,ctrl.signal)||{ok:false,text:()=>''};
       clearTimeout(t);
       if(r.ok){
         const html=await r.text();
@@ -1044,7 +1053,7 @@ async function _shopApothekeSearch(name,pzn,strength,manufacturer){
       const target='https://www.shop-apotheke.com/search.htm?q='+encodeURIComponent(query);
       const ctrl=new AbortController();
       const t=setTimeout(()=>ctrl.abort(),12000);
-      const r=await fetch(PROXY+encodeURIComponent(target),{signal:ctrl.signal});
+      const r=await _proxyFetch(target,ctrl.signal)||{ok:false,text:()=>''};
       clearTimeout(t);
       if(!r.ok)continue;
       const html=await r.text();
@@ -1152,7 +1161,16 @@ async function _tryWikimediaCommonsStrict(name,nameWords,activeIngredient){
 // Gut für: Aspirin, Metformin, Lisinopril, Amoxicillin, usw.
 async function _openFDAImageSearch(name,strength){
   if(!name)return null;
-  const PROXY='https://api.codetabs.com/v1/proxy/?quest=';
+  const PROXIES=['https://api.codetabs.com/v1/proxy/?quest=','https://corsproxy.io/?','https://api.allorigins.win/raw?url='];
+  async function _proxyFetch(targetUrl,signal){
+    for(const P of PROXIES){
+      try{
+        const r=await fetch(P+encodeURIComponent(targetUrl),{signal});
+        if(r.ok){const t=await r.text();if(t&&t.length>500)return t;}
+      }catch(e){if(e&&e.name==='AbortError')throw e;}
+    }
+    return null;
+  }
   const q=encodeURIComponent(name.split(/\s+/)[0]); // Erstes Wort = Wirkstoff/Name
   try{
     const fdaRes=await fetch(PROXY+'https://api.fda.gov/drug/label.json?search=openfda.brand_name:'+q+'&limit=3',{signal:AbortSignal.timeout(5000)});
@@ -5050,7 +5068,7 @@ setInterval(()=>{
   }
 })();
 
-window._buildTime="SaDro-023 · 02.05.2026";
+window._buildTime="SaDro-026 · 07.05.2026";
 renderList(); // Übersicht beim Start anzeigen
 updateUserIndicator(); // User-Anzeige initialisieren
 // Nach App-Update: grünen Banner anzeigen
@@ -5088,5 +5106,6 @@ if('serviceWorker' in navigator){
 </script>
 </body>
 </html>
+
 
 
